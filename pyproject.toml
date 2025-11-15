@@ -16,4 +16,5 @@ lab1 = [
     "langchain>=1.0.7",
     "langgraph>=1.0.3",
     "markitdown>=0.1.3",
+    "mcp-run-python>=0.0.21",
 ]

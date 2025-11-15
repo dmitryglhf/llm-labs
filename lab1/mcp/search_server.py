@@ -7,7 +7,7 @@ from fastmcp import Context, FastMCP
 from markitdown import MarkItDown
 from pydantic import AnyUrl, Field
 
-mcp = FastMCP("lab1-tools")
+mcp = FastMCP("web-search")
 md = MarkItDown()
 
 DDGSResult = list[dict[str, str]]
