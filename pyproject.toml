@@ -1,0 +1,15 @@
+[project]
+name = "llm-labs"
+version = "0.1.0"
+description = "Labs of course NLP and LLM"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "marimo>=0.17.8",
+]
+
+[dependency-groups]
+lab1 = [
+    "langchain>=1.0.7",
+    "langgraph>=1.0.3",
+]
