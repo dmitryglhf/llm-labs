@@ -92,17 +92,14 @@ def _(MarkItDown, asyncio, requests, tool):
         lines = text_content.split("\n")
         if len(lines) > max_lines:
             truncated = "\n".join(lines[:max_lines])
-            return (
-                f"{truncated}\n\n... (truncated, showing {max_lines} of {len(lines)} lines)"
-            )
+            return f"{truncated}\n\n... (truncated, showing {max_lines} of {len(lines)} lines)"
 
         return text_content
-
 
     @tool
     async def extract(
         url: str,
-        max_lines: int | None= None,
+        max_lines: int | None = None,
     ) -> str:
         """
         Convert web page to Markdown.
@@ -172,11 +169,11 @@ def _(ArxivAPIWrapper, Document, tool):
     @tool
     def arxiv_search(query: str, max_results: int = 3) -> list[Document]:
         """Search arXiv for academic papers and return documents with summaries.
-    
+
         Args:
             query: Search query for arXiv papers
             max_results: Maximum number of results to return
-    
+
         Returns:
             List of Document objects with paper summaries and metadata
         """
@@ -211,13 +208,11 @@ def _(BaseModel):
         max_web_results: int = 5
         year_filter: str | None = None
 
-
     class ResearchPlan(BaseModel):
         arxiv_query: str
         web_queries: list[str]
         focus_areas: list[str]
         expected_sources: int
-
 
     class ArxivFinding(BaseModel):
         title: str
@@ -226,19 +221,16 @@ def _(BaseModel):
         url: str
         published: str
 
-
     class WebFinding(BaseModel):
         title: str
         url: str
         content_summary: str
         relevance_score: float
 
-
     class ResearchFindings(BaseModel):
         arxiv_papers: list[ArxivFinding]
         web_sources: list[WebFinding]
         total_sources: int
-
 
     class ResearchReport(BaseModel):
         topic: str
@@ -248,13 +240,11 @@ def _(BaseModel):
         web_sources: list[WebFinding]
         gaps_identified: list[str]
 
-
     class ReviewFeedback(BaseModel):
         approved: bool
         missing_aspects: list[str]
         quality_score: float
         suggestions: list[str]
-
 
     class ResearchState(BaseModel):
         query: ResearchQuery
@@ -263,10 +253,17 @@ def _(BaseModel):
         web_findings: list[WebFinding] = []
         report: ResearchReport | None = None
         review: ReviewFeedback | None = None
-        retry_count: int = 0
         errors: list[str] = []
         iteration: int = 0
-    return ResearchPlan, ResearchReport, ResearchState, ReviewFeedback
+    return (
+        ArxivFinding,
+        ResearchPlan,
+        ResearchQuery,
+        ResearchReport,
+        ResearchState,
+        ReviewFeedback,
+        WebFinding,
+    )
 
 
 @app.cell
@@ -290,11 +287,13 @@ def _():
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
     from langgraph.graph import END, StateGraph
+    from langgraph.types import RetryPolicy
     return (
         ChatOpenAI,
         END,
         HumanMessage,
         Literal,
+        RetryPolicy,
         StateGraph,
         SystemMessage,
         create_agent,
@@ -305,7 +304,7 @@ def _():
 def _():
     import os
 
-    from dotenv import load_dotenv, find_dotenv
+    from dotenv import find_dotenv, load_dotenv
 
     load_dotenv(find_dotenv(usecwd=True))
 
@@ -387,7 +386,13 @@ def _():
 
     Provide a quality score (0.0-1.0) and decide if the report is approved or needs revision.
     Be strict but fair in your assessment."""
-    return ARXIV_RESEARCHER_PROMPT, PLANNER_PROMPT, WEB_RESEARCHER_PROMPT
+    return (
+        ARXIV_RESEARCHER_PROMPT,
+        PLANNER_PROMPT,
+        REVIEWER_PROMPT,
+        SYNTHESIZER_PROMPT,
+        WEB_RESEARCHER_PROMPT,
+    )
 
 
 @app.cell(hide_code=True)
@@ -408,9 +413,13 @@ def _(
     llm,
     search,
 ):
-    arxiv_agent = create_agent(llm, [search, extract], system_prompt=ARXIV_RESEARCHER_PROMPT)
-    web_agent = create_agent(llm, [arxiv_search, extract], system_prompt=WEB_RESEARCHER_PROMPT)
-    return
+    arxiv_agent = create_agent(
+        llm, [arxiv_search], system_prompt=ARXIV_RESEARCHER_PROMPT
+    )
+    web_agent = create_agent(
+        llm, [search, extract], system_prompt=WEB_RESEARCHER_PROMPT
+    )
+    return arxiv_agent, web_agent
 
 
 @app.cell
@@ -440,49 +449,137 @@ def _(
 
 
 @app.cell
-def _(ResearchState):
-    def arxiv_researcher_node(state: ResearchState) -> ResearchState:
-        findings = []
-        state.arxiv_findings = findings
+def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, llm):
+    async def arxiv_researcher_node(state: ResearchState) -> ResearchState:
+        if not state.plan:
+            state.errors.append("No research plan available")
+            return state
+
+        query = f"Search arXiv for: {state.plan.arxiv_query}. Find {state.query.max_papers} papers. Extract title, authors, summary, url, and published date for each paper."
+
+        result = await arxiv_agent.ainvoke({"messages": [HumanMessage(content=query)]})
+
+        ai_messages = [
+            msg.content
+            for msg in result["messages"]
+            if msg.type == "ai" and msg.content
+        ]
+
+        if ai_messages:
+            structured_llm = llm.with_structured_output(list[ArxivFinding])
+            findings = await structured_llm.ainvoke(
+                [HumanMessage(content=ai_messages[-1])]
+            )
+            state.arxiv_findings = findings if findings else []
+
         return state
     return (arxiv_researcher_node,)
 
 
 @app.cell
-def _(ResearchState):
-    def web_researcher_node(state: ResearchState) -> ResearchState:
-        findings = []
-        state.web_findings = findings
+def _(HumanMessage, ResearchState, WebFinding, llm, web_agent):
+    async def web_researcher_node(state: ResearchState) -> ResearchState:
+        if not state.plan:
+            state.errors.append("No research plan available")
+            return state
+
+        queries = " AND ".join(state.plan.web_queries)
+        query = f"Search web for: {queries}. Find {state.query.max_web_results} sources. Extract title, url, content summary, and assess relevance score for each source."
+
+        result = await web_agent.ainvoke({"messages": [HumanMessage(content=query)]})
+
+        ai_messages = [
+            msg.content
+            for msg in result["messages"]
+            if msg.type == "ai" and msg.content
+        ]
+
+        if ai_messages:
+            structured_llm = llm.with_structured_output(list[WebFinding])
+            findings = await structured_llm.ainvoke(
+                [HumanMessage(content=ai_messages[-1])]
+            )
+            state.web_findings = findings if findings else []
+
         return state
     return (web_researcher_node,)
 
 
 @app.cell
-def _(ResearchReport, ResearchState):
-    def synthesizer_node(state: ResearchState) -> ResearchState:
-        report = ResearchReport(
-            topic=state.query.topic,
-            key_findings=[],
-            summary="",
-            arxiv_papers=state.arxiv_findings,
-            web_sources=state.web_findings,
-            gaps_identified=[],
+def _(
+    HumanMessage,
+    ResearchReport,
+    ResearchState,
+    SYNTHESIZER_PROMPT,
+    SystemMessage,
+    llm,
+):
+    async def synthesizer_node(state: ResearchState) -> ResearchState:
+        structured_llm = llm.with_structured_output(ResearchReport)
+
+        arxiv_summary = "\n".join(
+            [
+                f"- {p.title} by {', '.join(p.authors)}: {p.summary}"
+                for p in state.arxiv_findings
+            ]
         )
-        state.report = report
+        web_summary = "\n".join(
+            [f"- {s.title} ({s.url}): {s.content_summary}" for s in state.web_findings]
+        )
+
+        feedback = ""
+        if state.review and state.review.suggestions:
+            feedback = "Previous review feedback: " + ", ".join(
+                state.review.suggestions
+            )
+
+        context = f"""Topic: {state.query.topic}
+
+    ArXiv Papers:
+    {arxiv_summary if arxiv_summary else "No papers found"}
+
+    Web Sources:
+    {web_summary if web_summary else "No sources found"}
+
+    {feedback}"""
+
+        response = await structured_llm.ainvoke(
+            [SystemMessage(content=SYNTHESIZER_PROMPT), HumanMessage(content=context)]
+        )
+
+        state.report = response
+        state.iteration += 1
         return state
     return (synthesizer_node,)
 
 
 @app.cell
-def _(ResearchState, ReviewFeedback):
-    def reviewer_node(state: ResearchState) -> ResearchState:
-        review = ReviewFeedback(
-            approved=True,
-            missing_aspects=[],
-            quality_score=0.8,
-            suggestions=[],
+def _(
+    HumanMessage,
+    REVIEWER_PROMPT,
+    ResearchState,
+    ReviewFeedback,
+    SystemMessage,
+    llm,
+):
+    async def reviewer_node(state: ResearchState) -> ResearchState:
+        if not state.report:
+            state.errors.append("No report available to review")
+            return state
+
+        structured_llm = llm.with_structured_output(ReviewFeedback)
+
+        report_text = f"""Report Summary: {state.report.summary}
+    Key Findings: {", ".join(state.report.key_findings)}
+    Number of ArXiv papers: {len(state.report.arxiv_papers)}
+    Number of Web sources: {len(state.report.web_sources)}
+    Gaps identified: {", ".join(state.report.gaps_identified)}"""
+
+        response = await structured_llm.ainvoke(
+            [SystemMessage(content=REVIEWER_PROMPT), HumanMessage(content=report_text)]
         )
-        state.review = review
+
+        state.review = response
         return state
     return (reviewer_node,)
 
@@ -505,6 +602,7 @@ def _(ResearchState, StateGraph):
 @app.cell
 def _(
     END,
+    RetryPolicy,
     arxiv_researcher_node,
     g,
     planner_node,
@@ -513,9 +611,16 @@ def _(
     synthesizer_node,
     web_researcher_node,
 ):
+    retry_policy = RetryPolicy(
+        max_attempts=3,
+        initial_interval=0.5,
+        backoff_factor=2.0,
+        jitter=True,
+    )
+
     g.add_node("planner", planner_node)
-    g.add_node("arxiv_researcher", arxiv_researcher_node)
-    g.add_node("web_researcher", web_researcher_node)
+    g.add_node("arxiv_researcher", arxiv_researcher_node, retry=retry_policy)
+    g.add_node("web_researcher", web_researcher_node, retry=retry_policy)
     g.add_node("synthesizer", synthesizer_node)
     g.add_node("reviewer", reviewer_node)
 
@@ -529,7 +634,76 @@ def _(
 
     g.add_edge("synthesizer", "reviewer")
 
-    g.add_conditional_edges("reviewer", should_revise, {"synthesizer": "synthesizer", "end": END})
+    g.add_conditional_edges(
+        "reviewer", should_revise, {"synthesizer": "synthesizer", "end": END}
+    )
+
+    app = g.compile()
+    return (app,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Graph Visualization
+    """)
+    return
+
+
+@app.cell
+def _(app, mo):
+    mo.mermaid(app.get_graph().draw_mermaid())
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Demo Execution
+    """)
+    return
+
+
+@app.cell
+def _(ResearchQuery):
+    demo_query = ResearchQuery(
+        topic="Multi-agent systems with LLMs",
+        max_papers=3,
+        max_web_results=3,
+    )
+    return (demo_query,)
+
+
+@app.cell
+async def _(ResearchState, app, demo_query):
+    initial_state = ResearchState(query=demo_query)
+    result = await app.ainvoke(initial_state)
+    return (result,)
+
+
+@app.cell
+def _(mo, result):
+    if result.report:
+        mo.md(f"""
+        ### Research Report
+
+        **Topic:** {result.report.topic}
+
+        **Summary:**
+        {result.report.summary}
+
+        **Key Findings:**
+        {chr(10).join(f"- {finding}" for finding in result.report.key_findings)}
+
+        **ArXiv Papers Found:** {len(result.report.arxiv_papers)}
+
+        **Web Sources Found:** {len(result.report.web_sources)}
+
+        **Gaps Identified:**
+        {chr(10).join(f"- {gap}" for gap in result.report.gaps_identified)}
+
+        **Review Score:** {result.review.quality_score if result.review else "N/A"}
+        """)
     return
 
 
