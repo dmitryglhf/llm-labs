@@ -4,10 +4,12 @@ from typing import Literal
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain_community.tools import ArxivQueryRun, DuckDuckGoSearchRun
+from langchain_community.utilities.arxiv import ArxivAPIWrapper
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
-from models import (
+
+from .models import (
     ArxivFinding,
     ResearchPlan,
     ResearchReport,
@@ -23,7 +25,7 @@ llm = ChatOpenAI(
     temperature=0.7,
 )
 
-arxiv_tool = ArxivQueryRun()
+arxiv_tool = ArxivQueryRun(api_wrapper=ArxivAPIWrapper())
 search_tool = DuckDuckGoSearchRun()
 
 PLANNER_PROMPT = """You are a research coordinator. Your task is to analyze the research topic and create a structured research plan.

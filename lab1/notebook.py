@@ -149,7 +149,6 @@ def _(MarkItDown, asyncio, requests, tool):
 
         markdown_content = truncate_text(markdown_content, max_lines)
         return markdown_content
-
     return (extract,)
 
 
@@ -163,9 +162,30 @@ def _(mo):
 
 @app.cell
 def _():
-    from langchain_community.tools import ArxivQueryRun
+    from langchain_community.utilities.arxiv import ArxivAPIWrapper
+    from langchain_core.documents import Document
+    return ArxivAPIWrapper, Document
 
-    arxiv_search = ArxivQueryRun()
+
+@app.cell
+def _(ArxivAPIWrapper, Document, tool):
+    @tool
+    def arxiv_search(query: str, max_results: int = 3) -> list[Document]:
+        """Search arXiv for academic papers and return documents with summaries.
+    
+        Args:
+            query: Search query for arXiv papers
+            max_results: Maximum number of results to return
+    
+        Returns:
+            List of Document objects with paper summaries and metadata
+        """
+        arxiv_wrapper = ArxivAPIWrapper(
+            top_k_results=max_results,
+            load_max_docs=100,
+            doc_content_chars_max=4000,
+        )
+        return arxiv_wrapper.get_summaries_as_docs(query)
     return (arxiv_search,)
 
 
@@ -246,7 +266,6 @@ def _(BaseModel):
         retry_count: int = 0
         errors: list[str] = []
         iteration: int = 0
-
     return ResearchPlan, ResearchReport, ResearchState, ReviewFeedback
 
 
