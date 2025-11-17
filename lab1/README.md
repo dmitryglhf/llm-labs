@@ -5,5 +5,5 @@
 uv sync --group lab1
 
 # Run the notebook
-marimo edit notebook.py
+marimo edit lab1/notebook.py
 ```
