@@ -7,6 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
@@ -21,6 +22,7 @@ def _(mo):
 @app.cell
 def _():
     from langchain.tools import tool
+
     return (tool,)
 
 
@@ -39,6 +41,7 @@ def _():
     import requests
     from ddgs import DDGS
     from markitdown import MarkItDown
+
     return DDGS, MarkItDown, asyncio, requests
 
 
@@ -80,6 +83,7 @@ def _(DDGS, tool):
             backend=backend,
         )
         return results
+
     return (search,)
 
 
@@ -146,6 +150,7 @@ def _(MarkItDown, asyncio, requests, tool):
 
         markdown_content = truncate_text(markdown_content, max_lines)
         return markdown_content
+
     return (extract,)
 
 
@@ -161,6 +166,7 @@ def _(mo):
 def _():
     from langchain_community.utilities.arxiv import ArxivAPIWrapper
     from langchain_core.documents import Document
+
     return ArxivAPIWrapper, Document
 
 
@@ -183,6 +189,7 @@ def _(ArxivAPIWrapper, Document, tool):
             doc_content_chars_max=4000,
         )
         return arxiv_wrapper.get_summaries_as_docs(query)
+
     return (arxiv_search,)
 
 
@@ -196,12 +203,16 @@ def _(mo):
 
 @app.cell
 def _():
-    from pydantic import BaseModel
-    return (BaseModel,)
+    import operator
+    from typing import Annotated
+
+    from pydantic import BaseModel, Field
+
+    return (Annotated, BaseModel, Field, operator)
 
 
 @app.cell
-def _(BaseModel):
+def _(Annotated, BaseModel, Field, operator):
     class ResearchQuery(BaseModel):
         topic: str
         max_papers: int = 5
@@ -249,12 +260,17 @@ def _(BaseModel):
     class ResearchState(BaseModel):
         query: ResearchQuery
         plan: ResearchPlan | None = None
-        arxiv_findings: list[ArxivFinding] = []
-        web_findings: list[WebFinding] = []
+        arxiv_findings: Annotated[list[ArxivFinding], operator.add] = Field(
+            default_factory=list
+        )
+        web_findings: Annotated[list[WebFinding], operator.add] = Field(
+            default_factory=list
+        )
         report: ResearchReport | None = None
         review: ReviewFeedback | None = None
-        errors: list[str] = []
+        errors: Annotated[list[str], operator.add] = Field(default_factory=list)
         iteration: int = 0
+
     return (
         ArxivFinding,
         ResearchPlan,
@@ -264,11 +280,6 @@ def _(BaseModel):
         ReviewFeedback,
         WebFinding,
     )
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell(hide_code=True)
@@ -281,18 +292,16 @@ def _(mo):
 
 @app.cell
 def _():
-    from typing import Literal
-
     from langchain.agents import create_agent
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
     from langgraph.graph import END, StateGraph
     from langgraph.types import RetryPolicy
+
     return (
         ChatOpenAI,
         END,
         HumanMessage,
-        Literal,
         RetryPolicy,
         StateGraph,
         SystemMessage,
@@ -404,6 +413,13 @@ def _(mo):
 
 
 @app.cell
+def _():
+    import json
+
+    return (json,)
+
+
+@app.cell
 def _(
     ARXIV_RESEARCHER_PROMPT,
     WEB_RESEARCHER_PROMPT,
@@ -429,27 +445,31 @@ def _(
     ResearchPlan,
     ResearchState,
     SystemMessage,
+    json,
     llm,
 ):
     async def planner_node(state: ResearchState) -> ResearchState:
-        structured_llm = llm.with_structured_output(ResearchPlan)
-
-        response = await structured_llm.ainvoke(
+        response = await llm.ainvoke(
             [
-                SystemMessage(content=PLANNER_PROMPT),
+                SystemMessage(
+                    content=PLANNER_PROMPT
+                    + f"\n\nYou must respond with valid JSON matching this schema: {ResearchPlan.model_json_schema()}"
+                ),
                 HumanMessage(
                     content=f"Topic: {state.query.topic}\nMax papers: {state.query.max_papers}\nMax web results: {state.query.max_web_results}"
                 ),
             ]
         )
 
-        state.plan = response
+        parsed_content = json.loads(response.content)
+        state.plan = ResearchPlan(**parsed_content)
         return state
+
     return (planner_node,)
 
 
 @app.cell
-def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, llm):
+def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, json, llm):
     async def arxiv_researcher_node(state: ResearchState) -> ResearchState:
         if not state.plan:
             state.errors.append("No research plan available")
@@ -466,18 +486,26 @@ def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, llm):
         ]
 
         if ai_messages:
-            structured_llm = llm.with_structured_output(list[ArxivFinding])
-            findings = await structured_llm.ainvoke(
-                [HumanMessage(content=ai_messages[-1])]
+            response = await llm.ainvoke(
+                [
+                    HumanMessage(
+                        content=f"{ai_messages[-1]}\n\nExtract the findings as a JSON array matching this schema: {ArxivFinding.model_json_schema()}"
+                    )
+                ]
             )
-            state.arxiv_findings = findings if findings else []
+            try:
+                parsed_content = json.loads(response.content)
+                state.arxiv_findings = [ArxivFinding(**item) for item in parsed_content]
+            except (json.JSONDecodeError, Exception):
+                state.arxiv_findings = []
 
         return state
+
     return (arxiv_researcher_node,)
 
 
 @app.cell
-def _(HumanMessage, ResearchState, WebFinding, llm, web_agent):
+def _(HumanMessage, ResearchState, WebFinding, json, llm, web_agent):
     async def web_researcher_node(state: ResearchState) -> ResearchState:
         if not state.plan:
             state.errors.append("No research plan available")
@@ -495,13 +523,21 @@ def _(HumanMessage, ResearchState, WebFinding, llm, web_agent):
         ]
 
         if ai_messages:
-            structured_llm = llm.with_structured_output(list[WebFinding])
-            findings = await structured_llm.ainvoke(
-                [HumanMessage(content=ai_messages[-1])]
+            response = await llm.ainvoke(
+                [
+                    HumanMessage(
+                        content=f"{ai_messages[-1]}\n\nExtract the findings as a JSON array matching this schema: {WebFinding.model_json_schema()}"
+                    )
+                ]
             )
-            state.web_findings = findings if findings else []
+            try:
+                parsed_content = json.loads(response.content)
+                state.web_findings = [WebFinding(**item) for item in parsed_content]
+            except (json.JSONDecodeError, Exception):
+                state.web_findings = []
 
         return state
+
     return (web_researcher_node,)
 
 
@@ -512,11 +548,10 @@ def _(
     ResearchState,
     SYNTHESIZER_PROMPT,
     SystemMessage,
+    json,
     llm,
 ):
     async def synthesizer_node(state: ResearchState) -> ResearchState:
-        structured_llm = llm.with_structured_output(ResearchReport)
-
         arxiv_summary = "\n".join(
             [
                 f"- {p.title} by {', '.join(p.authors)}: {p.summary}"
@@ -541,15 +576,23 @@ def _(
     Web Sources:
     {web_summary if web_summary else "No sources found"}
 
-    {feedback}"""
+    {feedback}
 
-        response = await structured_llm.ainvoke(
+    Respond with valid JSON matching this schema: {ResearchReport.model_json_schema()}"""
+
+        response = await llm.ainvoke(
             [SystemMessage(content=SYNTHESIZER_PROMPT), HumanMessage(content=context)]
         )
 
-        state.report = response
+        try:
+            parsed_content = json.loads(response.content)
+            state.report = ResearchReport(**parsed_content)
+        except (json.JSONDecodeError, Exception) as e:
+            state.errors.append(f"Failed to parse synthesizer response: {str(e)}")
+
         state.iteration += 1
         return state
+
     return (synthesizer_node,)
 
 
@@ -560,6 +603,7 @@ def _(
     ResearchState,
     ReviewFeedback,
     SystemMessage,
+    json,
     llm,
 ):
     async def reviewer_node(state: ResearchState) -> ResearchState:
@@ -567,29 +611,36 @@ def _(
             state.errors.append("No report available to review")
             return state
 
-        structured_llm = llm.with_structured_output(ReviewFeedback)
-
         report_text = f"""Report Summary: {state.report.summary}
     Key Findings: {", ".join(state.report.key_findings)}
     Number of ArXiv papers: {len(state.report.arxiv_papers)}
     Number of Web sources: {len(state.report.web_sources)}
-    Gaps identified: {", ".join(state.report.gaps_identified)}"""
+    Gaps identified: {", ".join(state.report.gaps_identified)}
 
-        response = await structured_llm.ainvoke(
+    Respond with valid JSON matching this schema: {ReviewFeedback.model_json_schema()}"""
+
+        response = await llm.ainvoke(
             [SystemMessage(content=REVIEWER_PROMPT), HumanMessage(content=report_text)]
         )
 
-        state.review = response
+        try:
+            parsed_content = json.loads(response.content)
+            state.review = ReviewFeedback(**parsed_content)
+        except (json.JSONDecodeError, Exception) as e:
+            state.errors.append(f"Failed to parse reviewer response: {str(e)}")
+
         return state
+
     return (reviewer_node,)
 
 
 @app.cell
-def _(Literal, ResearchState):
-    def should_revise(state: ResearchState) -> Literal["synthesizer", "end"]:
+def _(ResearchState):
+    def should_revise(state: ResearchState) -> str:
         if state.review and not state.review.approved and state.iteration < 2:
             return "synthesizer"
         return "end"
+
     return (should_revise,)
 
 
@@ -665,9 +716,15 @@ def _(mo):
 
 
 @app.cell
-def _(ResearchQuery):
+def _():
+    QUERY = "Multi-agent systems with LLMs"
+    return (QUERY,)
+
+
+@app.cell
+def _(QUERY, ResearchQuery):
     demo_query = ResearchQuery(
-        topic="Multi-agent systems with LLMs",
+        topic=QUERY,
         max_papers=3,
         max_web_results=3,
     )
@@ -683,27 +740,26 @@ async def _(ResearchState, app, demo_query):
 
 @app.cell
 def _(mo, result):
-    if result.report:
-        mo.md(f"""
-        ### Research Report
+    mo.md(f"""
+    ### Research Report
 
-        **Topic:** {result.report.topic}
+    **Topic:** {result.report.topic}
 
-        **Summary:**
-        {result.report.summary}
+    **Summary:**
+    {result.report.summary}
 
-        **Key Findings:**
-        {chr(10).join(f"- {finding}" for finding in result.report.key_findings)}
+    **Key Findings:**
+    {chr(10).join(f"- {finding}" for finding in result.report.key_findings)}
 
-        **ArXiv Papers Found:** {len(result.report.arxiv_papers)}
+    **ArXiv Papers Found:** {len(result.report.arxiv_papers)}
 
-        **Web Sources Found:** {len(result.report.web_sources)}
+    **Web Sources Found:** {len(result.report.web_sources)}
 
-        **Gaps Identified:**
-        {chr(10).join(f"- {gap}" for gap in result.report.gaps_identified)}
+    **Gaps Identified:**
+    {chr(10).join(f"- {gap}" for gap in result.report.gaps_identified)}
 
-        **Review Score:** {result.review.quality_score if result.review else "N/A"}
-        """)
+    **Review Score:** {result.review.quality_score if result.review else "N/A"}
+    """)
     return
 
 
