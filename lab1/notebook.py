@@ -448,7 +448,7 @@ def _(
     json,
     llm,
 ):
-    async def planner_node(state: ResearchState) -> ResearchState:
+    async def planner_node(state: ResearchState) -> dict:
         response = await llm.ainvoke(
             [
                 SystemMessage(
@@ -462,18 +462,17 @@ def _(
         )
 
         parsed_content = json.loads(response.content)
-        state.plan = ResearchPlan(**parsed_content)
-        return state
+        plan = ResearchPlan(**parsed_content)
+        return {"plan": plan}
 
     return (planner_node,)
 
 
 @app.cell
 def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, json, llm):
-    async def arxiv_researcher_node(state: ResearchState) -> ResearchState:
+    async def arxiv_researcher_node(state: ResearchState) -> dict:
         if not state.plan:
-            state.errors.append("No research plan available")
-            return state
+            return {"errors": ["No research plan available"]}
 
         query = f"Search arXiv for: {state.plan.arxiv_query}. Find {state.query.max_papers} papers. Extract title, authors, summary, url, and published date for each paper."
 
@@ -495,21 +494,21 @@ def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, json, llm):
             )
             try:
                 parsed_content = json.loads(response.content)
-                state.arxiv_findings = [ArxivFinding(**item) for item in parsed_content]
+                arxiv_findings = [ArxivFinding(**item) for item in parsed_content]
+                return {"arxiv_findings": arxiv_findings}
             except (json.JSONDecodeError, Exception):
-                state.arxiv_findings = []
+                return {"arxiv_findings": []}
 
-        return state
+        return {"arxiv_findings": []}
 
     return (arxiv_researcher_node,)
 
 
 @app.cell
 def _(HumanMessage, ResearchState, WebFinding, json, llm, web_agent):
-    async def web_researcher_node(state: ResearchState) -> ResearchState:
+    async def web_researcher_node(state: ResearchState) -> dict:
         if not state.plan:
-            state.errors.append("No research plan available")
-            return state
+            return {"errors": ["No research plan available"]}
 
         queries = " AND ".join(state.plan.web_queries)
         query = f"Search web for: {queries}. Find {state.query.max_web_results} sources. Extract title, url, content summary, and assess relevance score for each source."
@@ -532,11 +531,12 @@ def _(HumanMessage, ResearchState, WebFinding, json, llm, web_agent):
             )
             try:
                 parsed_content = json.loads(response.content)
-                state.web_findings = [WebFinding(**item) for item in parsed_content]
+                web_findings = [WebFinding(**item) for item in parsed_content]
+                return {"web_findings": web_findings}
             except (json.JSONDecodeError, Exception):
-                state.web_findings = []
+                return {"web_findings": []}
 
-        return state
+        return {"web_findings": []}
 
     return (web_researcher_node,)
 
@@ -551,7 +551,7 @@ def _(
     json,
     llm,
 ):
-    async def synthesizer_node(state: ResearchState) -> ResearchState:
+    async def synthesizer_node(state: ResearchState) -> dict:
         arxiv_summary = "\n".join(
             [
                 f"- {p.title} by {', '.join(p.authors)}: {p.summary}"
@@ -586,12 +586,13 @@ def _(
 
         try:
             parsed_content = json.loads(response.content)
-            state.report = ResearchReport(**parsed_content)
+            report = ResearchReport(**parsed_content)
+            return {"report": report, "iteration": state.iteration + 1}
         except (json.JSONDecodeError, Exception) as e:
-            state.errors.append(f"Failed to parse synthesizer response: {str(e)}")
-
-        state.iteration += 1
-        return state
+            return {
+                "errors": [f"Failed to parse synthesizer response: {str(e)}"],
+                "iteration": state.iteration + 1,
+            }
 
     return (synthesizer_node,)
 
@@ -606,10 +607,9 @@ def _(
     json,
     llm,
 ):
-    async def reviewer_node(state: ResearchState) -> ResearchState:
+    async def reviewer_node(state: ResearchState) -> dict:
         if not state.report:
-            state.errors.append("No report available to review")
-            return state
+            return {"errors": ["No report available to review"]}
 
         report_text = f"""Report Summary: {state.report.summary}
     Key Findings: {", ".join(state.report.key_findings)}
@@ -625,11 +625,10 @@ def _(
 
         try:
             parsed_content = json.loads(response.content)
-            state.review = ReviewFeedback(**parsed_content)
+            review = ReviewFeedback(**parsed_content)
+            return {"review": review}
         except (json.JSONDecodeError, Exception) as e:
-            state.errors.append(f"Failed to parse reviewer response: {str(e)}")
-
-        return state
+            return {"errors": [f"Failed to parse reviewer response: {str(e)}"]}
 
     return (reviewer_node,)
 
