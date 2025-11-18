@@ -1,13 +1,12 @@
 import marimo
 
 __generated_with = "0.17.8"
-app = marimo.App(width="medium")
+app = marimo.App(width="medium", auto_download=["ipynb"])
 
 
 @app.cell
 def _():
     import marimo as mo
-
     return (mo,)
 
 
@@ -22,7 +21,6 @@ def _(mo):
 @app.cell
 def _():
     from langchain.tools import tool
-
     return (tool,)
 
 
@@ -37,7 +35,6 @@ def _(mo):
 @app.cell
 def _():
     from ddgs import DDGS
-
     return (DDGS,)
 
 
@@ -79,7 +76,6 @@ def _(DDGS, tool):
             backend=backend,
         )
         return results
-
     return (search,)
 
 
@@ -94,7 +90,6 @@ def _(mo):
 @app.cell
 def _():
     import arxiv
-
     return (arxiv,)
 
 
@@ -121,7 +116,6 @@ def _(arxiv, tool):
             )
 
         return papers
-
     return (arxiv_search,)
 
 
@@ -142,7 +136,6 @@ def _():
     from langchain_core.output_parsers import PydanticOutputParser
     from langchain_core.prompts import ChatPromptTemplate
     from pydantic import BaseModel, Field
-
     return (
         Annotated,
         BaseModel,
@@ -228,7 +221,6 @@ def _(Annotated, BaseModel, Field, operator):
         review: ReviewFeedback | None = None
         errors: Annotated[list[str], operator.add] = Field(default_factory=list)
         iteration: int = 0
-
     return (
         ArxivFindings,
         ResearchPlan,
@@ -255,7 +247,6 @@ def _():
     from langchain_openai import ChatOpenAI
     from langgraph.graph import END, StateGraph
     from langgraph.types import RetryPolicy
-
     return ChatOpenAI, END, HumanMessage, RetryPolicy, StateGraph, create_agent
 
 
@@ -542,25 +533,24 @@ def _(PLANNER_PROMPT, llm, planner_parser):
     async def planner_node(state):
         messages = PLANNER_PROMPT.format_messages(
             format_instructions=planner_parser.get_format_instructions(),
-            topic=state["query"].topic,
-            max_papers=state["query"].max_papers,
-            max_web_results=state["query"].max_web_results,
+            topic=state.query.topic,
+            max_papers=state.query.max_papers,
+            max_web_results=state.query.max_web_results,
         )
         response = await llm.ainvoke(messages)
         plan = planner_parser.parse(response.content)
         return {"plan": plan}
-
     return (planner_node,)
 
 
 @app.cell
 def _(ARXIV_PARSER_PROMPT, HumanMessage, arxiv_agent, arxiv_parser, llm):
     async def arxiv_researcher_node(state):
-        if not state["plan"]:
+        if not state.plan:
             raise ValueError("No research plan available")
 
-        query = state["plan"].arxiv_query
-        max_papers = state["query"].max_papers
+        query = state.plan.arxiv_query
+        max_papers = state.query.max_papers
 
         message = HumanMessage(
             content=f"Search arXiv for: '{query}'. Find up to {max_papers} relevant papers."
@@ -577,18 +567,17 @@ def _(ARXIV_PARSER_PROMPT, HumanMessage, arxiv_agent, arxiv_parser, llm):
         )
 
         return {"arxiv_findings": parsed_result.papers}
-
     return (arxiv_researcher_node,)
 
 
 @app.cell
 def _(HumanMessage, WEB_PARSER_PROMPT, llm, web_agent, web_parser):
     async def web_researcher_node(state):
-        if not state["plan"]:
+        if not state.plan:
             raise ValueError("No research plan available")
 
-        queries = " AND ".join(state["plan"].web_queries)
-        max_results = state["query"].max_web_results
+        queries = " AND ".join(state.plan.web_queries)
+        max_results = state.query.max_web_results
 
         message = HumanMessage(
             content=f"Search web for: {queries}. Find up to {max_results} relevant sources."
@@ -605,7 +594,6 @@ def _(HumanMessage, WEB_PARSER_PROMPT, llm, web_agent, web_parser):
         )
 
         return {"web_findings": parsed_result.sources}
-
     return (web_researcher_node,)
 
 
@@ -615,23 +603,20 @@ def _(SYNTHESIZER_PROMPT, llm, synthesizer_parser):
         arxiv_summary = "\n".join(
             [
                 f"- {p.title} by {', '.join(p.authors)}: {p.summary}"
-                for p in state["arxiv_findings"]
+                for p in state.arxiv_findings
             ]
         )
         web_summary = "\n".join(
-            [
-                f"- {s.title} ({s.url}): {s.content_summary}"
-                for s in state["web_findings"]
-            ]
+            [f"- {s.title} ({s.url}): {s.content_summary}" for s in state.web_findings]
         )
 
         feedback = ""
-        if state["review"] and state["review"].suggestions:
+        if state.review and state.review.suggestions:
             feedback = "Previous review feedback: " + ", ".join(
-                state["review"].suggestions
+                state.review.suggestions
             )
 
-        context = f"""Topic: {state["query"].topic}
+        context = f"""Topic: {state.query.topic}
 
     ArXiv Papers:
     {arxiv_summary if arxiv_summary else "No papers found"}
@@ -647,22 +632,21 @@ def _(SYNTHESIZER_PROMPT, llm, synthesizer_parser):
         )
         response = await llm.ainvoke(messages)
         report = synthesizer_parser.parse(response.content)
-        return {"report": report, "iteration": state["iteration"] + 1}
-
+        return {"report": report, "iteration": state.iteration + 1}
     return (synthesizer_node,)
 
 
 @app.cell
 def _(REVIEWER_PROMPT, llm, reviewer_parser):
     async def reviewer_node(state):
-        if not state["report"]:
+        if not state.report:
             raise ValueError("No report available to review")
 
-        report_text = f"""Report Summary: {state["report"].summary}
-    Key Findings: {", ".join(state["report"].key_findings)}
-    Number of ArXiv papers: {len(state["arxiv_findings"])}
-    Number of Web sources: {len(state["web_findings"])}
-    Gaps identified: {", ".join(state["report"].gaps_identified)}"""
+        report_text = f"""Report Summary: {state.report.summary}
+    Key Findings: {", ".join(state.report.key_findings)}
+    Number of ArXiv papers: {len(state.arxiv_findings)}
+    Number of Web sources: {len(state.web_findings)}
+    Gaps identified: {", ".join(state.report.gaps_identified)}"""
 
         messages = REVIEWER_PROMPT.format_messages(
             format_instructions=reviewer_parser.get_format_instructions(),
@@ -671,13 +655,12 @@ def _(REVIEWER_PROMPT, llm, reviewer_parser):
         response = await llm.ainvoke(messages)
         review = reviewer_parser.parse(response.content)
         return {"review": review}
-
     return (reviewer_node,)
 
 
 @app.function
 def should_revise(state) -> str:
-    if state["review"] and not state["review"].approved and state["iteration"] < 2:
+    if state.review and not state.review.approved and state.iteration < 2:
         return "synthesizer"
     return "end"
 
