@@ -7,6 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
@@ -21,13 +22,14 @@ def _(mo):
 @app.cell
 def _():
     from langchain.tools import tool
+
     return (tool,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Web search & extract
+    ### Web search
     """)
     return
 
@@ -35,6 +37,7 @@ def _(mo):
 @app.cell
 def _():
     from ddgs import DDGS
+
     return (DDGS,)
 
 
@@ -76,6 +79,7 @@ def _(DDGS, tool):
             backend=backend,
         )
         return results
+
     return (search,)
 
 
@@ -90,6 +94,7 @@ def _(mo):
 @app.cell
 def _():
     import arxiv
+
     return (arxiv,)
 
 
@@ -116,6 +121,7 @@ def _(arxiv, tool):
             )
 
         return papers
+
     return (arxiv_search,)
 
 
@@ -130,57 +136,84 @@ def _(mo):
 @app.cell
 def _():
     import operator
+    from textwrap import dedent
     from typing import Annotated
 
+    from langchain_core.output_parsers import PydanticOutputParser
+    from langchain_core.prompts import ChatPromptTemplate
     from pydantic import BaseModel, Field
-    return Annotated, BaseModel, Field, operator
+
+    return (
+        Annotated,
+        BaseModel,
+        ChatPromptTemplate,
+        Field,
+        PydanticOutputParser,
+        dedent,
+        operator,
+    )
 
 
 @app.cell
 def _(Annotated, BaseModel, Field, operator):
     class ResearchQuery(BaseModel):
-        topic: str
-        max_papers: int = 5
-        max_web_results: int = 5
-        year_filter: str | None = None
+        topic: str = Field(..., description="Research topic to investigate")
+        max_papers: int = Field(
+            default=5, description="Maximum number of arXiv papers to retrieve"
+        )
+        max_web_results: int = Field(
+            default=5, description="Maximum number of web results to retrieve"
+        )
+        year_filter: str | None = Field(
+            default=None, description="Optional year filter for papers"
+        )
 
     class ResearchPlan(BaseModel):
-        arxiv_query: str
-        web_queries: list[str]
-        focus_areas: list[str]
-        expected_sources: int
+        arxiv_query: str = Field(..., description="Formatted query for arXiv search")
+        web_queries: list[str] = Field(..., description="List of web search queries")
+        focus_areas: list[str] = Field(
+            ..., description="Key focus areas for the research"
+        )
 
     class ArxivFinding(BaseModel):
-        title: str
-        authors: list[str]
-        summary: str
-        url: str
-        published: str
+        title: str = Field(..., description="Title of the paper")
+        authors: list[str] = Field(..., description="List of author names")
+        summary: str = Field(..., description="Summary of the paper")
+        url: str = Field(..., description="ArXiv URL")
+        published: str = Field(..., description="Publication date")
+
+    class ArxivFindings(BaseModel):
+        papers: list[ArxivFinding] = Field(
+            default_factory=list, description="List of found arXiv papers"
+        )
 
     class WebFinding(BaseModel):
-        title: str
-        url: str
-        content_summary: str
-        relevance_score: float
+        title: str = Field(..., description="Title of the web source")
+        url: str = Field(..., description="URL of the web source")
+        content_summary: str = Field(..., description="Summary of the content")
 
-    class ResearchFindings(BaseModel):
-        arxiv_papers: list[ArxivFinding]
-        web_sources: list[WebFinding]
-        total_sources: int
+    class WebFindings(BaseModel):
+        sources: list[WebFinding] = Field(
+            default_factory=list, description="List of found web sources"
+        )
 
     class ResearchReport(BaseModel):
-        topic: str
-        key_findings: list[str]
-        summary: str
-        arxiv_papers: list[ArxivFinding]
-        web_sources: list[WebFinding]
-        gaps_identified: list[str]
+        topic: str = Field(..., description="Research topic")
+        key_findings: list[str] = Field(..., description="List of key findings")
+        summary: str = Field(..., description="Overall summary of the research")
+        gaps_identified: list[str] = Field(
+            default_factory=list, description="Identified research gaps"
+        )
 
     class ReviewFeedback(BaseModel):
-        approved: bool
-        missing_aspects: list[str]
-        quality_score: float
-        suggestions: list[str]
+        approved: bool = Field(..., description="Whether the report is approved")
+        missing_aspects: list[str] = Field(
+            default_factory=list, description="Missing aspects in the report"
+        )
+        quality_score: float = Field(..., description="Quality score (0.0-1.0)")
+        suggestions: list[str] = Field(
+            default_factory=list, description="Suggestions for improvement"
+        )
 
     class ResearchState(BaseModel):
         query: ResearchQuery
@@ -195,14 +228,15 @@ def _(Annotated, BaseModel, Field, operator):
         review: ReviewFeedback | None = None
         errors: Annotated[list[str], operator.add] = Field(default_factory=list)
         iteration: int = 0
+
     return (
-        ArxivFinding,
+        ArxivFindings,
         ResearchPlan,
         ResearchQuery,
         ResearchReport,
         ResearchState,
         ReviewFeedback,
-        WebFinding,
+        WebFindings,
     )
 
 
@@ -217,19 +251,12 @@ def _(mo):
 @app.cell
 def _():
     from langchain.agents import create_agent
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
     from langchain_openai import ChatOpenAI
     from langgraph.graph import END, StateGraph
     from langgraph.types import RetryPolicy
-    return (
-        ChatOpenAI,
-        END,
-        HumanMessage,
-        RetryPolicy,
-        StateGraph,
-        SystemMessage,
-        create_agent,
-    )
+
+    return ChatOpenAI, END, HumanMessage, RetryPolicy, StateGraph, create_agent
 
 
 @app.cell
@@ -265,65 +292,221 @@ def _(mo):
 
 
 @app.cell
-def _():
-    PLANNER_PROMPT = """You are a research coordinator. Your task is to analyze the research topic and create a structured research plan.
+def _(
+    ArxivFindings,
+    ChatPromptTemplate,
+    PydanticOutputParser,
+    ResearchPlan,
+    ResearchReport,
+    ReviewFeedback,
+    WebFindings,
+    dedent,
+):
+    # Create parsers
+    planner_parser = PydanticOutputParser(pydantic_object=ResearchPlan)
+    arxiv_parser = PydanticOutputParser(pydantic_object=ArxivFindings)
+    web_parser = PydanticOutputParser(pydantic_object=WebFindings)
+    synthesizer_parser = PydanticOutputParser(pydantic_object=ResearchReport)
+    reviewer_parser = PydanticOutputParser(pydantic_object=ReviewFeedback)
 
-    Based on the user's topic, generate:
-    1. A well-formulated arXiv query
-    2. Multiple web search queries to cover different aspects
-    3. Key focus areas for the research
-    4. Expected number of sources
+    # Planner prompt
+    PLANNER_PROMPT = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                dedent(
+                    """
+            You are a research coordinator. Your task is to analyze the research topic and create a structured research plan.
 
-    Be specific and thorough in your planning."""
+            Based on the user's topic, generate:
+            1. A well-formulated arXiv query
+            2. Multiple web search queries to cover different aspects
+            3. Key focus areas for the research
+            4. Expected number of sources
 
-    ARXIV_RESEARCHER_PROMPT = """You are an academic researcher specializing in analyzing arXiv papers.
+            Be specific and thorough in your planning.
 
-    Your task is to:
-    1. Search for relevant papers using the arXiv tool
-    2. Extract key information from each paper
-    3. Summarize the main contributions
-    4. Identify the most important papers for the research topic
+            {format_instructions}
+            /no_think
+        """
+                ).strip(),
+            ),
+            (
+                "human",
+                dedent(
+                    """
+            Topic: {topic}
+            Max papers: {max_papers}
+            Max web results: {max_web_results}
+        """
+                ).strip(),
+            ),
+        ]
+    )
 
-    Focus on recent, high-quality publications. Use the available tools to search arXiv."""
+    # ArXiv researcher prompt (for agent)
+    ARXIV_SEARCH_PROMPT = dedent(
+        """
+        You are an academic researcher specializing in analyzing arXiv papers.
 
-    WEB_RESEARCHER_PROMPT = """You are a web researcher specializing in finding and analyzing online sources.
+        Your task is to:
+        1. Search for relevant papers using the arXiv tool
+        2. Extract key information from each paper
+        3. Summarize the main contributions
+        4. Identify the most important papers for the research topic
 
-    Your task is to:
-    1. Search the web using the DuckDuckGo tool
-    2. Extract and summarize relevant content
-    3. Assess the relevance and quality of each source
-    4. Provide concise summaries of key findings
+        Focus on recent, high-quality publications. Use the available tools to search arXiv.
+    """
+    ).strip()
 
-    Focus on authoritative and up-to-date sources. Use the available tools to search the web."""
+    # ArXiv parser prompt
+    ARXIV_PARSER_PROMPT = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                dedent(
+                    """
+            You are a helpful assistant that extracts paper information from agent search results.
+            {format_instructions}
+            /no_think
+        """
+                ).strip(),
+            ),
+            (
+                "human",
+                dedent(
+                    """
+            Extract papers from these agent results:
 
-    SYNTHESIZER_PROMPT = """You are a research analyst and technical writer.
+            {agent_output}
+        """
+                ).strip(),
+            ),
+        ]
+    )
 
-    Your task is to synthesize all collected research into a comprehensive report.
+    # Web researcher prompt (for agent)
+    WEB_SEARCH_PROMPT = dedent(
+        """
+        You are a web researcher specializing in finding and analyzing online sources.
 
-    You should:
-    1. Identify and summarize key findings across all sources
-    2. Write a coherent summary of the research landscape
-    3. Highlight important papers and sources
-    4. Identify gaps in current research or understanding
+        Your task is to:
+        1. Search the web using the DuckDuckGo tool
+        2. Extract and summarize relevant content
+        3. Assess the relevance and quality of each source
+        4. Provide concise summaries of key findings
 
-    Create a well-structured, informative research report."""
+        Focus on authoritative and up-to-date sources. Use the available tools to search the web.
+    """
+    ).strip()
 
-    REVIEWER_PROMPT = """You are a critical reviewer and research quality assessor.
+    # Web parser prompt
+    WEB_PARSER_PROMPT = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                dedent(
+                    """
+            You are a helpful assistant that extracts web source information from agent search results.
+            {format_instructions}
+            /no_think
+        """
+                ).strip(),
+            ),
+            (
+                "human",
+                dedent(
+                    """
+            Extract web sources from these agent results:
 
-    Your task is to evaluate the research report for:
-    1. Completeness - are all important aspects covered?
-    2. Quality - is the analysis thorough and well-reasoned?
-    3. Clarity - is the report well-written and understandable?
-    4. Missing aspects - what could be improved or added?
+            {agent_output}
+        """
+                ).strip(),
+            ),
+        ]
+    )
 
-    Provide a quality score (0.0-1.0) and decide if the report is approved or needs revision.
-    Be strict but fair in your assessment."""
+    # Synthesizer prompt
+    SYNTHESIZER_PROMPT = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                dedent(
+                    """
+            You are a research analyst and technical writer.
+
+            Your task is to synthesize all collected research into a comprehensive report.
+
+            You should:
+            1. Identify and summarize key findings across all sources
+            2. Write a coherent summary of the research landscape
+            3. Highlight important papers and sources
+            4. Identify gaps in current research or understanding
+
+            Create a well-structured, informative research report.
+
+            {format_instructions}
+            /no_think
+        """
+                ).strip(),
+            ),
+            (
+                "human",
+                dedent(
+                    """
+            {context}
+        """
+                ).strip(),
+            ),
+        ]
+    )
+
+    # Reviewer prompt
+    REVIEWER_PROMPT = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                dedent(
+                    """
+            You are a critical reviewer and research quality assessor.
+
+            Your task is to evaluate the research report for:
+            1. Completeness - are all important aspects covered?
+            2. Quality - is the analysis thorough and well-reasoned?
+            3. Clarity - is the report well-written and understandable?
+            4. Missing aspects - what could be improved or added?
+
+            Provide a quality score (0.0-1.0) and decide if the report is approved or needs revision.
+            Be strict but fair in your assessment.
+
+            {format_instructions}
+            /no_think
+        """
+                ).strip(),
+            ),
+            (
+                "human",
+                dedent(
+                    """
+            {report_text}
+        """
+                ).strip(),
+            ),
+        ]
+    )
     return (
-        ARXIV_RESEARCHER_PROMPT,
+        ARXIV_PARSER_PROMPT,
+        ARXIV_SEARCH_PROMPT,
         PLANNER_PROMPT,
         REVIEWER_PROMPT,
         SYNTHESIZER_PROMPT,
-        WEB_RESEARCHER_PROMPT,
+        WEB_PARSER_PROMPT,
+        WEB_SEARCH_PROMPT,
+        arxiv_parser,
+        planner_parser,
+        reviewer_parser,
+        synthesizer_parser,
+        web_parser,
     )
 
 
@@ -337,157 +520,118 @@ def _(mo):
 
 @app.cell
 def _():
-    import json
-    return (json,)
+    return
 
 
 @app.cell
 def _(
-    ARXIV_RESEARCHER_PROMPT,
-    WEB_RESEARCHER_PROMPT,
+    ARXIV_SEARCH_PROMPT,
+    WEB_SEARCH_PROMPT,
     arxiv_search,
     create_agent,
-    extract,
     llm,
     search,
 ):
-    arxiv_agent = create_agent(
-        llm, [arxiv_search], system_prompt=ARXIV_RESEARCHER_PROMPT
-    )
-    web_agent = create_agent(
-        llm, [search, extract], system_prompt=WEB_RESEARCHER_PROMPT
-    )
+    arxiv_agent = create_agent(llm, [arxiv_search], system_prompt=ARXIV_SEARCH_PROMPT)
+    web_agent = create_agent(llm, [search], system_prompt=WEB_SEARCH_PROMPT)
     return arxiv_agent, web_agent
 
 
 @app.cell
-def _(
-    HumanMessage,
-    PLANNER_PROMPT,
-    ResearchPlan,
-    ResearchState,
-    SystemMessage,
-    json,
-    llm,
-):
-    async def planner_node(state: ResearchState) -> dict:
-        response = await llm.ainvoke(
-            [
-                SystemMessage(
-                    content=PLANNER_PROMPT
-                    + f"\n\nYou must respond with valid JSON matching this schema: {ResearchPlan.model_json_schema()}"
-                ),
-                HumanMessage(
-                    content=f"Topic: {state.query.topic}\nMax papers: {state.query.max_papers}\nMax web results: {state.query.max_web_results}"
-                ),
-            ]
+def _(PLANNER_PROMPT, llm, planner_parser):
+    async def planner_node(state):
+        messages = PLANNER_PROMPT.format_messages(
+            format_instructions=planner_parser.get_format_instructions(),
+            topic=state["query"].topic,
+            max_papers=state["query"].max_papers,
+            max_web_results=state["query"].max_web_results,
         )
-
-        parsed_content = json.loads(response.content)
-        plan = ResearchPlan(**parsed_content)
+        response = await llm.ainvoke(messages)
+        plan = planner_parser.parse(response.content)
         return {"plan": plan}
+
     return (planner_node,)
 
 
 @app.cell
-def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, json, llm):
-    async def arxiv_researcher_node(state: ResearchState) -> dict:
-        if not state.plan:
-            return {"errors": ["No research plan available"]}
+def _(ARXIV_PARSER_PROMPT, HumanMessage, arxiv_agent, arxiv_parser, llm):
+    async def arxiv_researcher_node(state):
+        if not state["plan"]:
+            raise ValueError("No research plan available")
 
-        query = f"Search arXiv for: {state.plan.arxiv_query}. Find {state.query.max_papers} papers. Extract title, authors, summary, url, and published date for each paper."
+        query = state["plan"].arxiv_query
+        max_papers = state["query"].max_papers
 
-        result = await arxiv_agent.ainvoke({"messages": [HumanMessage(content=query)]})
+        message = HumanMessage(
+            content=f"Search arXiv for: '{query}'. Find up to {max_papers} relevant papers."
+        )
+        agent_response = await arxiv_agent.ainvoke({"messages": [message]})
+        agent_output = agent_response["messages"][-1].content
 
-        ai_messages = [
-            msg.content
-            for msg in result["messages"]
-            if msg.type == "tool" and msg.content
-        ]
+        chain = ARXIV_PARSER_PROMPT | llm | arxiv_parser
+        parsed_result = await chain.ainvoke(
+            {
+                "format_instructions": arxiv_parser.get_format_instructions(),
+                "agent_output": agent_output,
+            }
+        )
 
-        if ai_messages:
-            response = await llm.ainvoke(
-                [
-                    HumanMessage(
-                        content=f"{ai_messages[-1]}\n\nExtract the findings as a JSON array matching this schema: {ArxivFinding.model_json_schema()}"
-                    )
-                ]
-            )
-            try:
-                parsed_content = json.loads(response.content)
-                arxiv_findings = [ArxivFinding(**item) for item in parsed_content]
-                return {"arxiv_findings": arxiv_findings}
-            except (json.JSONDecodeError, Exception):
-                return {"arxiv_findings": []}
+        return {"arxiv_findings": parsed_result.papers}
 
-        return {"arxiv_findings": []}
     return (arxiv_researcher_node,)
 
 
 @app.cell
-def _(HumanMessage, ResearchState, WebFinding, json, llm, web_agent):
-    async def web_researcher_node(state: ResearchState) -> dict:
-        if not state.plan:
-            return {"errors": ["No research plan available"]}
+def _(HumanMessage, WEB_PARSER_PROMPT, llm, web_agent, web_parser):
+    async def web_researcher_node(state):
+        if not state["plan"]:
+            raise ValueError("No research plan available")
 
-        queries = " AND ".join(state.plan.web_queries)
-        query = f"Search web for: {queries}. Find {state.query.max_web_results} sources. Extract title, url, content summary, and assess relevance score for each source."
+        queries = " AND ".join(state["plan"].web_queries)
+        max_results = state["query"].max_web_results
 
-        result = await web_agent.ainvoke({"messages": [HumanMessage(content=query)]})
+        message = HumanMessage(
+            content=f"Search web for: {queries}. Find up to {max_results} relevant sources."
+        )
+        agent_response = await web_agent.ainvoke({"messages": [message]})
+        agent_output = agent_response["messages"][-1].content
 
-        ai_messages = [
-            msg.content
-            for msg in result["messages"]
-            if msg.type == "ai" and msg.content
-        ]
+        chain = WEB_PARSER_PROMPT | llm | web_parser
+        parsed_result = await chain.ainvoke(
+            {
+                "format_instructions": web_parser.get_format_instructions(),
+                "agent_output": agent_output,
+            }
+        )
 
-        if ai_messages:
-            response = await llm.ainvoke(
-                [
-                    HumanMessage(
-                        content=f"{ai_messages[-1]}\n\nExtract the findings as a JSON array matching this schema: {WebFinding.model_json_schema()}"
-                    )
-                ]
-            )
-            try:
-                parsed_content = json.loads(response.content)
-                web_findings = [WebFinding(**item) for item in parsed_content]
-                return {"web_findings": web_findings}
-            except (json.JSONDecodeError, Exception):
-                return {"web_findings": []}
+        return {"web_findings": parsed_result.sources}
 
-        return {"web_findings": []}
     return (web_researcher_node,)
 
 
 @app.cell
-def _(
-    HumanMessage,
-    ResearchReport,
-    ResearchState,
-    SYNTHESIZER_PROMPT,
-    SystemMessage,
-    json,
-    llm,
-):
-    async def synthesizer_node(state: ResearchState) -> dict:
+def _(SYNTHESIZER_PROMPT, llm, synthesizer_parser):
+    async def synthesizer_node(state):
         arxiv_summary = "\n".join(
             [
                 f"- {p.title} by {', '.join(p.authors)}: {p.summary}"
-                for p in state.arxiv_findings
+                for p in state["arxiv_findings"]
             ]
         )
         web_summary = "\n".join(
-            [f"- {s.title} ({s.url}): {s.content_summary}" for s in state.web_findings]
+            [
+                f"- {s.title} ({s.url}): {s.content_summary}"
+                for s in state["web_findings"]
+            ]
         )
 
         feedback = ""
-        if state.review and state.review.suggestions:
+        if state["review"] and state["review"].suggestions:
             feedback = "Previous review feedback: " + ", ".join(
-                state.review.suggestions
+                state["review"].suggestions
             )
 
-        context = f"""Topic: {state.query.topic}
+        context = f"""Topic: {state["query"].topic}
 
     ArXiv Papers:
     {arxiv_summary if arxiv_summary else "No papers found"}
@@ -495,68 +639,47 @@ def _(
     Web Sources:
     {web_summary if web_summary else "No sources found"}
 
-    {feedback}
+    {feedback}"""
 
-    Respond with valid JSON matching this schema: {ResearchReport.model_json_schema()}"""
-
-        response = await llm.ainvoke(
-            [SystemMessage(content=SYNTHESIZER_PROMPT), HumanMessage(content=context)]
+        messages = SYNTHESIZER_PROMPT.format_messages(
+            format_instructions=synthesizer_parser.get_format_instructions(),
+            context=context,
         )
+        response = await llm.ainvoke(messages)
+        report = synthesizer_parser.parse(response.content)
+        return {"report": report, "iteration": state["iteration"] + 1}
 
-        try:
-            parsed_content = json.loads(response.content)
-            report = ResearchReport(**parsed_content)
-            return {"report": report, "iteration": state.iteration + 1}
-        except (json.JSONDecodeError, Exception) as e:
-            return {
-                "errors": [f"Failed to parse synthesizer response: {str(e)}"],
-                "iteration": state.iteration + 1,
-            }
     return (synthesizer_node,)
 
 
 @app.cell
-def _(
-    HumanMessage,
-    REVIEWER_PROMPT,
-    ResearchState,
-    ReviewFeedback,
-    SystemMessage,
-    json,
-    llm,
-):
-    async def reviewer_node(state: ResearchState) -> dict:
-        if not state.report:
-            return {"errors": ["No report available to review"]}
+def _(REVIEWER_PROMPT, llm, reviewer_parser):
+    async def reviewer_node(state):
+        if not state["report"]:
+            raise ValueError("No report available to review")
 
-        report_text = f"""Report Summary: {state.report.summary}
-    Key Findings: {", ".join(state.report.key_findings)}
-    Number of ArXiv papers: {len(state.report.arxiv_papers)}
-    Number of Web sources: {len(state.report.web_sources)}
-    Gaps identified: {", ".join(state.report.gaps_identified)}
+        report_text = f"""Report Summary: {state["report"].summary}
+    Key Findings: {", ".join(state["report"].key_findings)}
+    Number of ArXiv papers: {len(state["arxiv_findings"])}
+    Number of Web sources: {len(state["web_findings"])}
+    Gaps identified: {", ".join(state["report"].gaps_identified)}"""
 
-    Respond with valid JSON matching this schema: {ReviewFeedback.model_json_schema()}"""
-
-        response = await llm.ainvoke(
-            [SystemMessage(content=REVIEWER_PROMPT), HumanMessage(content=report_text)]
+        messages = REVIEWER_PROMPT.format_messages(
+            format_instructions=reviewer_parser.get_format_instructions(),
+            report_text=report_text,
         )
+        response = await llm.ainvoke(messages)
+        review = reviewer_parser.parse(response.content)
+        return {"review": review}
 
-        try:
-            parsed_content = json.loads(response.content)
-            review = ReviewFeedback(**parsed_content)
-            return {"review": review}
-        except (json.JSONDecodeError, Exception) as e:
-            return {"errors": [f"Failed to parse reviewer response: {str(e)}"]}
     return (reviewer_node,)
 
 
-@app.cell
-def _(ResearchState):
-    def should_revise(state: ResearchState) -> str:
-        if state.review and not state.review.approved and state.iteration < 2:
-            return "synthesizer"
-        return "end"
-    return (should_revise,)
+@app.function
+def should_revise(state) -> str:
+    if state["review"] and not state["review"].approved and state["iteration"] < 2:
+        return "synthesizer"
+    return "end"
 
 
 @app.cell
@@ -573,7 +696,6 @@ def _(
     g,
     planner_node,
     reviewer_node,
-    should_revise,
     synthesizer_node,
     web_researcher_node,
 ):
@@ -617,8 +739,8 @@ def _(mo):
 
 
 @app.cell
-def _(app, mo):
-    mo.mermaid(app.get_graph().draw_mermaid())
+def _(app):
+    app.get_graph().draw_ascii()
     return
 
 
@@ -648,8 +770,8 @@ def _(QUERY, ResearchQuery):
 
 @app.cell
 async def _(ResearchState, app, demo_query):
-    initial_state = ResearchState(query=demo_query)
-    result = await app.ainvoke(initial_state)
+    state = ResearchState(query=demo_query)
+    result = await app.ainvoke(state)
     return (result,)
 
 

@@ -14,6 +14,7 @@ dependencies = [
 lab1 = [
     "arxiv>=2.3.1",
     "ddgs>=9.9.1",
+    "grandalf>=0.8",
     "langchain>=1.0.7",
     "langchain-community>=0.4.1",
     "langchain-openai>=1.0.3",
