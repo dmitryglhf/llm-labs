@@ -510,11 +510,6 @@ def _(mo):
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
 def _(
     ARXIV_SEARCH_PROMPT,
     WEB_SEARCH_PROMPT,
