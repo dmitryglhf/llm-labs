@@ -7,7 +7,6 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-
     return (mo,)
 
 
@@ -22,7 +21,6 @@ def _(mo):
 @app.cell
 def _():
     from langchain.tools import tool
-
     return (tool,)
 
 
@@ -36,13 +34,8 @@ def _(mo):
 
 @app.cell
 def _():
-    import asyncio
-
-    import requests
     from ddgs import DDGS
-    from markitdown import MarkItDown
-
-    return DDGS, MarkItDown, asyncio, requests
+    return (DDGS,)
 
 
 @app.cell
@@ -83,75 +76,7 @@ def _(DDGS, tool):
             backend=backend,
         )
         return results
-
     return (search,)
-
-
-@app.cell
-def _(MarkItDown, asyncio, requests, tool):
-    def truncate_text(text_content: str, max_lines: int | None = None) -> str:
-        if max_lines is None:
-            return text_content
-
-        lines = text_content.split("\n")
-        if len(lines) > max_lines:
-            truncated = "\n".join(lines[:max_lines])
-            return f"{truncated}\n\n... (truncated, showing {max_lines} of {len(lines)} lines)"
-
-        return text_content
-
-    @tool
-    async def extract(
-        url: str,
-        max_lines: int | None = None,
-    ) -> str:
-        """
-        Convert web page to Markdown.
-
-        Supports:
-        - Regular web pages (HTML)
-        - Web-hosted documents
-
-        Args:
-            url: URL of the web page (http:// or https://)
-            max_lines: Return only first N lines of Markdown output
-
-        Returns:
-            Markdown content
-
-        Examples:
-            - extract("https://example.com/article")
-            - extract("https://example.com/document.pdf")
-        """
-
-        def _convert():
-            session = requests.Session()
-            session.headers.update(
-                {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "DNT": "1",
-                    "Connection": "keep-alive",
-                    "Upgrade-Insecure-Requests": "1",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Cache-Control": "max-age=0",
-                }
-            )
-            md = MarkItDown(requests_session=session)
-            result = md.convert(str(url))
-            return result.text_content
-
-        markdown_content = await asyncio.to_thread(_convert)
-
-        markdown_content = truncate_text(markdown_content, max_lines)
-        return markdown_content
-
-    return (extract,)
 
 
 @app.cell(hide_code=True)
@@ -164,32 +89,33 @@ def _(mo):
 
 @app.cell
 def _():
-    from langchain_community.utilities.arxiv import ArxivAPIWrapper
-    from langchain_core.documents import Document
-
-    return ArxivAPIWrapper, Document
+    import arxiv
+    return (arxiv,)
 
 
 @app.cell
-def _(ArxivAPIWrapper, Document, tool):
+def _(arxiv, tool):
     @tool
-    def arxiv_search(query: str, max_results: int = 3) -> list[Document]:
-        """Search arXiv for academic papers and return documents with summaries.
-
-        Args:
-            query: Search query for arXiv papers
-            max_results: Maximum number of results to return
-
-        Returns:
-            List of Document objects with paper summaries and metadata
-        """
-        arxiv_wrapper = ArxivAPIWrapper(
-            top_k_results=max_results,
-            load_max_docs=100,
-            doc_content_chars_max=4000,
+    def arxiv_search(query: str, max_results: int = 3) -> list[dict]:
+        """Search for relevant papers using the arXiv tool"""
+        search = arxiv.Search(
+            query=query, max_results=max_results, sort_by=arxiv.SortCriterion.Relevance
         )
-        return arxiv_wrapper.get_summaries_as_docs(query)
 
+        papers = []
+        for result in search.results():
+            papers.append(
+                {
+                    "title": result.title,
+                    "authors": [author.name for author in result.authors],
+                    "summary": result.summary,
+                    "published": result.published.isoformat(),
+                    "url": result.entry_id,
+                    "arxiv_id": result.entry_id.split("/")[-1],
+                }
+            )
+
+        return papers
     return (arxiv_search,)
 
 
@@ -207,8 +133,7 @@ def _():
     from typing import Annotated
 
     from pydantic import BaseModel, Field
-
-    return (Annotated, BaseModel, Field, operator)
+    return Annotated, BaseModel, Field, operator
 
 
 @app.cell
@@ -270,7 +195,6 @@ def _(Annotated, BaseModel, Field, operator):
         review: ReviewFeedback | None = None
         errors: Annotated[list[str], operator.add] = Field(default_factory=list)
         iteration: int = 0
-
     return (
         ArxivFinding,
         ResearchPlan,
@@ -297,7 +221,6 @@ def _():
     from langchain_openai import ChatOpenAI
     from langgraph.graph import END, StateGraph
     from langgraph.types import RetryPolicy
-
     return (
         ChatOpenAI,
         END,
@@ -415,7 +338,6 @@ def _(mo):
 @app.cell
 def _():
     import json
-
     return (json,)
 
 
@@ -464,7 +386,6 @@ def _(
         parsed_content = json.loads(response.content)
         plan = ResearchPlan(**parsed_content)
         return {"plan": plan}
-
     return (planner_node,)
 
 
@@ -481,7 +402,7 @@ def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, json, llm):
         ai_messages = [
             msg.content
             for msg in result["messages"]
-            if msg.type == "ai" and msg.content
+            if msg.type == "tool" and msg.content
         ]
 
         if ai_messages:
@@ -500,7 +421,6 @@ def _(ArxivFinding, HumanMessage, ResearchState, arxiv_agent, json, llm):
                 return {"arxiv_findings": []}
 
         return {"arxiv_findings": []}
-
     return (arxiv_researcher_node,)
 
 
@@ -537,7 +457,6 @@ def _(HumanMessage, ResearchState, WebFinding, json, llm, web_agent):
                 return {"web_findings": []}
 
         return {"web_findings": []}
-
     return (web_researcher_node,)
 
 
@@ -593,7 +512,6 @@ def _(
                 "errors": [f"Failed to parse synthesizer response: {str(e)}"],
                 "iteration": state.iteration + 1,
             }
-
     return (synthesizer_node,)
 
 
@@ -629,7 +547,6 @@ def _(
             return {"review": review}
         except (json.JSONDecodeError, Exception) as e:
             return {"errors": [f"Failed to parse reviewer response: {str(e)}"]}
-
     return (reviewer_node,)
 
 
@@ -639,7 +556,6 @@ def _(ResearchState):
         if state.review and not state.review.approved and state.iteration < 2:
             return "synthesizer"
         return "end"
-
     return (should_revise,)
 
 
@@ -738,27 +654,8 @@ async def _(ResearchState, app, demo_query):
 
 
 @app.cell
-def _(mo, result):
-    mo.md(f"""
-    ### Research Report
-
-    **Topic:** {result.report.topic}
-
-    **Summary:**
-    {result.report.summary}
-
-    **Key Findings:**
-    {chr(10).join(f"- {finding}" for finding in result.report.key_findings)}
-
-    **ArXiv Papers Found:** {len(result.report.arxiv_papers)}
-
-    **Web Sources Found:** {len(result.report.web_sources)}
-
-    **Gaps Identified:**
-    {chr(10).join(f"- {gap}" for gap in result.report.gaps_identified)}
-
-    **Review Score:** {result.review.quality_score if result.review else "N/A"}
-    """)
+def _(result):
+    result
     return
 
 

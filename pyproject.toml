@@ -16,8 +16,6 @@ lab1 = [
     "ddgs>=9.9.1",
     "langchain>=1.0.7",
     "langchain-community>=0.4.1",
-    "langchain-mcp-adapters>=0.1.13",
     "langchain-openai>=1.0.3",
     "langgraph>=1.0.3",
-    "markitdown>=0.1.3",
 ]
