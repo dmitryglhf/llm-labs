@@ -7,7 +7,6 @@ app = marimo.App(width="medium", auto_download=["ipynb"])
 @app.cell
 def _():
     import marimo as mo
-
     return (mo,)
 
 
@@ -22,7 +21,6 @@ def _(mo):
 @app.cell
 def _():
     from langchain.tools import tool
-
     return (tool,)
 
 
@@ -38,7 +36,6 @@ def _(mo):
 def _():
     from ddgs import DDGS
     from loguru import logger
-
     return DDGS, logger
 
 
@@ -82,7 +79,6 @@ def _(DDGS, logger, tool):
         )
         logger.info(f"search: {len(results)} results")
         return results
-
     return (search,)
 
 
@@ -97,7 +93,6 @@ def _(mo):
 @app.cell
 def _():
     import arxiv
-
     return (arxiv,)
 
 
@@ -126,7 +121,6 @@ def _(arxiv, logger, tool):
 
         logger.info(f"arxiv_search: {len(papers)} papers")
         return papers
-
     return (arxiv_search,)
 
 
@@ -147,7 +141,6 @@ def _():
     from langchain_core.output_parsers import PydanticOutputParser
     from langchain_core.prompts import ChatPromptTemplate
     from pydantic import BaseModel, Field
-
     return (
         Annotated,
         BaseModel,
@@ -233,7 +226,6 @@ def _(Annotated, BaseModel, Field, operator):
         review: ReviewFeedback | None = None
         errors: Annotated[list[str], operator.add] = Field(default_factory=list)
         iteration: int = 0
-
     return (
         ArxivFindings,
         ResearchPlan,
@@ -260,7 +252,6 @@ def _():
     from langchain_openai import ChatOpenAI
     from langgraph.graph import END, StateGraph
     from langgraph.types import RetryPolicy
-
     return ChatOpenAI, END, HumanMessage, RetryPolicy, StateGraph, create_agent
 
 
@@ -551,12 +542,18 @@ def _(PLANNER_PROMPT, llm, logger, planner_parser):
         plan = planner_parser.parse(response.content)
         logger.info(f"planner: {len(plan.web_queries)} queries")
         return {"plan": plan}
-
     return (planner_node,)
 
 
 @app.cell
-def _(ARXIV_PARSER_PROMPT, HumanMessage, arxiv_agent, arxiv_parser, llm, logger):
+def _(
+    ARXIV_PARSER_PROMPT,
+    HumanMessage,
+    arxiv_agent,
+    arxiv_parser,
+    llm,
+    logger,
+):
     async def arxiv_researcher_node(state):
         if not state.plan:
             raise ValueError("No research plan available")
@@ -581,7 +578,6 @@ def _(ARXIV_PARSER_PROMPT, HumanMessage, arxiv_agent, arxiv_parser, llm, logger)
 
         logger.info(f"arxiv_researcher: {len(parsed_result.papers)} papers")
         return {"arxiv_findings": parsed_result.papers}
-
     return (arxiv_researcher_node,)
 
 
@@ -611,7 +607,6 @@ def _(HumanMessage, WEB_PARSER_PROMPT, llm, logger, web_agent, web_parser):
 
         logger.info(f"web_researcher: {len(parsed_result.sources)} sources")
         return {"web_findings": parsed_result.sources}
-
     return (web_researcher_node,)
 
 
@@ -653,7 +648,6 @@ def _(SYNTHESIZER_PROMPT, llm, logger, synthesizer_parser):
         report = synthesizer_parser.parse(response.content)
         logger.info(f"synthesizer: {len(report.key_findings)} findings")
         return {"report": report, "iteration": state.iteration + 1}
-
     return (synthesizer_node,)
 
 
@@ -680,7 +674,6 @@ def _(REVIEWER_PROMPT, llm, logger, reviewer_parser):
             f"reviewer: approved={review.approved}, score={review.quality_score:.2f}"
         )
         return {"review": review}
-
     return (reviewer_node,)
 
 
@@ -748,8 +741,8 @@ def _(mo):
 
 
 @app.cell
-def _(app):
-    app.get_graph().draw_ascii()
+def _(app, mo):
+    mo.mermaid(app.get_graph().draw_mermaid())
     return
 
 
