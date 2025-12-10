@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "logly>=0.1.6",
-    "loguru>=0.7.3",
     "marimo>=0.17.8",
     "nbformat>=5.10.4",
     "notebook>=7.5.0",
@@ -17,10 +16,14 @@ dependencies = [
 [dependency-groups]
 lab1 = [
     "arxiv>=2.3.1",
+    "loguru>=0.7.3",
     "ddgs>=9.9.1",
     "grandalf>=0.8",
     "langchain>=1.0.7",
     "langchain-community>=0.4.1",
     "langchain-openai>=1.0.3",
     "langgraph>=1.0.3",
+]
+lab2 = [
+    "chromadb>=1.3.6",
 ]
