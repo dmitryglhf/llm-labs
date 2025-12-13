@@ -1,61 +1,88 @@
 import marimo
 
-__generated_with = "0.18.4"
+__generated_with = "0.17.8"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
     import marimo as mo
-
     return (mo,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Lab 2: Multi-Agent Study/Productivity Assistant
+    # Лабораторная работа 2: Мультиагентный помощник по учёбе и продуктивности
 
-    This notebook implements a multi-agent system using LangChain and LangGraph to assist with study, programming, and productivity tasks.
+    Данный ноутбук реализует мультиагентную систему с использованием LangChain и LangGraph для помощи в учёбе, программировании и задачах продуктивности.
 
-    ## System Architecture
+    ## Архитектура системы
 
-    The system consists of 5 specialized agents:
-    - **Router Agent**: Classifies requests and determines which agent to activate (conditional routing)
-    - **Theory Agent**: Handles conceptual/theoretical questions about MAS and LLMs
-    - **Code Agent**: Assists with programming and implementation questions (uses code execution tool)
-    - **Planning Agent**: Helps with task planning and productivity (uses time and planning tools)
-    - **Memory Agent**: Manages session history and user context, saves memory to file
+    Система состоит из 4 специализированных агентов.
 
-    ### MAS Pattern: Router + Specialized Agents with Conditional Routing
+    **Агент-роутер** классифицирует запросы пользователя и определяет, какой агент должен быть активирован. Использует условную маршрутизацию (conditional routing) для передачи управления.
 
-    The system uses a **router pattern** where the Router Agent analyzes incoming queries and routes them to the appropriate specialized agent using **conditional edges**. Only ONE agent is activated per query based on classification.
+    **Агент теории** обрабатывает концептуальные и теоретические вопросы о мультиагентных системах и больших языковых моделях.
 
-    ### Flow Diagram
+    **Агент планирования** помогает с планированием задач, продуктивностью и программированием. Использует инструменты работы со временем, создания планов, веб-поиска документации и навигации по файловой системе проекта.
 
-    ```mermaid
-    graph TD
-        A[User Query] --> B[Router Agent]
-        B -->|theory| C[Theory Agent]
-        B -->|code| D[Code Agent]
-        B -->|planning| E[Planning Agent]
-        B -->|general| F[Memory Agent]
-        C --> F[Memory Agent]
-        D --> F
-        E --> F
-        F --> G[Final Response]
+    **Агент памяти** управляет историей сессии и контекстом пользователя. Сохраняет память в файл.
+
+    ## Паттерн МАС: Роутер + Специализированные агенты с условной маршрутизацией
+
+    Система использует паттерн роутера, где агент-роутер анализирует входящие запросы и направляет их к соответствующему специализированному агенту через условные рёбра графа. На основе классификации активируется только ОДИН агент на каждый запрос.
+
+    ## ASCII-схема потока управления и данных
+
+    ```
+                           ┌──────────────────┐
+                           │ Запрос           │
+                           │ пользователя     │
+                           └────────┬─────────┘
+                                    │
+                                    ▼
+                           ┌────────────────────┐
+                           │  Агент-роутер      │
+                           │  (классификация)   │
+                           └─────┬──────────────┘
+                                 │
+                    ┌────────────┼────────────┐
+                    │            │            │
+               [теория]    [планирование]  [общее]
+                    │            │            │
+                    ▼            ▼            ▼
+            ┌──────────┐  ┌──────────┐  ┌──────────┐
+            │  Агент   │  │  Агент   │  │  Агент   │
+            │  теории  │  │планиро-  │  │  памяти  │
+            │          │  │  вания   │  │          │
+            └────┬─────┘  └────┬─────┘  └────┬─────┘
+                 │             │             │
+                 └─────────────┼─────────────┘
+                               ▼
+                      ┌────────────────┐
+                      │  Агент памяти  │
+                      │ (финализация)  │
+                      └────────┬───────┘
+                               │
+                               ▼
+                      ┌────────────────┐
+                      │   Финальный    │
+                      │     ответ      │
+                      └────────────────┘
     ```
 
-    ### Tool Usage
-    - **Theory Agent**: Uses `search_wikipedia` and `get_wikipedia_article` tools for theoretical concepts
-    - **Code Agent**: Uses `execute_code`, `search_arxiv`, and `download_arxiv_paper` tools for code and research
-    - **Planning Agent**: Uses `get_current_time`, `create_study_plan`, `list_study_materials`, and `read_study_material` tools
-    - **Memory Agent**: Uses `save_memory` and `load_memory` tools to persist session data
+    ## Использование инструментов (Tool Calling)
 
-    ### Memory Management
-    - Session history stored in state and persisted to JSON file
-    - Previous interactions loaded and used to improve routing and responses
-    - Memory influences agent responses through context injection
+    **Агент теории** использует инструменты `search_wikipedia` и `get_wikipedia_article` для поиска и получения теоретических концепций.
+
+    **Агент планирования** использует расширенный набор инструментов: `get_current_time`, `create_study_plan`, `list_study_materials`, `read_study_material` для управления временем и планами обучения, а также `web_search` для поиска документации и примеров кода, `list_files` для навигации по файловой системе проекта и `read_code_file` для чтения исходного кода.
+
+    **Агент памяти** использует инструменты `save_memory` и `load_memory` для сохранения и загрузки данных сессии.
+
+    ## Управление памятью (Memory Management)
+
+    История сессии хранится в состоянии (state) и персистентно сохраняется в JSON-файл. Предыдущие взаимодействия загружаются и используются для улучшения маршрутизации и ответов. Память влияет на ответы агентов через инъекцию контекста в промпты.
     """)
     return
 
@@ -67,19 +94,19 @@ def _():
     from datetime import datetime
     from pathlib import Path
 
-    import arxiv
     import wikipedia
+    from ddgs import DDGS
     from langchain.tools import tool
     from logly import logger
-
-    return Path, arxiv, datetime, json, logger, os, tool, wikipedia
+    return DDGS, Path, datetime, json, logger, os, tool, wikipedia
 
 
 @app.cell
-def _(Path, arxiv, datetime, json, logger, tool, wikipedia):
+def _(DDGS, Path, datetime, json, logger, tool, wikipedia):
     MEMORY_FILE = Path("lab2_memory.json")
     STUDY_MATERIALS_DIR = Path("study_materials")
     STUDY_MATERIALS_DIR.mkdir(parents=True, exist_ok=True)
+    CODE_ROOT_DIR = Path.cwd()  # Root directory for code search
 
     @tool
     def save_memory(session_history: str, user_preferences: str) -> str:
@@ -113,20 +140,6 @@ def _(Path, arxiv, datetime, json, logger, tool, wikipedia):
         except Exception as e:
             logger.error(f"Failed to load memory: {e}")
             return json.dumps({"session_history": [], "user_preferences": {}})
-
-    @tool
-    def execute_code(code: str) -> str:
-        """Execute Python code and return result"""
-        logger.debug(f"Executing code: {code[:50]}...")
-        try:
-            local_vars = {}
-            exec(code, {}, local_vars)
-            result = local_vars.get("result", "Code executed successfully")
-            logger.debug(f"Code execution result: {str(result)[:100]}")
-            return str(result)
-        except Exception as e:
-            logger.error(f"Code execution error: {e}")
-            return f"Error: {str(e)}"
 
     @tool
     def get_current_time() -> str:
@@ -212,49 +225,6 @@ def _(Path, arxiv, datetime, json, logger, tool, wikipedia):
             return f"Error: {str(e)}"
 
     @tool
-    def search_arxiv(query: str, max_results: int = 3) -> str:
-        """Search arXiv for research papers and return titles and abstracts"""
-        logger.debug(f"Searching arXiv for: {query}")
-        try:
-            search = arxiv.Search(
-                query=query,
-                max_results=max_results,
-                sort_by=arxiv.SortCriterion.Relevance,
-            )
-            results = []
-            for paper in search.results():
-                arxiv_id = paper.entry_id.split("/")[-1]
-                results.append(
-                    f"**{paper.title}** (ID: {arxiv_id})\n"
-                    f"Authors: {', '.join([a.name for a in paper.authors[:3]])}\n"
-                    f"Published: {paper.published.strftime('%Y-%m-%d')}\n"
-                    f"Abstract: {paper.summary[:300]}...\n"
-                )
-            return "\n\n".join(results) if results else f"No papers found for '{query}'"
-        except Exception as e:
-            logger.error(f"arXiv search error: {e}")
-            return f"Error searching arXiv: {str(e)}"
-
-    @tool
-    def download_arxiv_paper(arxiv_id: str) -> str:
-        """Download a paper from arXiv by its ID"""
-        logger.debug(f"Downloading arXiv paper: {arxiv_id}")
-        try:
-            search = arxiv.Search(id_list=[arxiv_id])
-            paper = next(search.results(), None)
-            if paper:
-                file_path = STUDY_MATERIALS_DIR / f"{arxiv_id}.pdf"
-                paper.download_pdf(
-                    dirpath=str(STUDY_MATERIALS_DIR), filename=file_path.name
-                )
-                return f"Downloaded '{paper.title}' to {file_path.name}"
-            else:
-                return f"Paper {arxiv_id} not found"
-        except Exception as e:
-            logger.error(f"arXiv download error: {e}")
-            return f"Error downloading paper: {str(e)}"
-
-    @tool
     def list_study_materials(folder: str = "study_materials") -> str:
         """List all downloaded study materials (articles, papers)"""
         logger.debug("Listing study materials")
@@ -288,18 +258,118 @@ def _(Path, arxiv, datetime, json, logger, tool, wikipedia):
             logger.error(f"Read material error: {e}")
             return f"Error reading file: {str(e)}"
 
+    @tool
+    def web_search(
+        query: str,
+        max_results: int = 5,
+        region: str = "us-en",
+        safesearch: str = "moderate",
+    ) -> str:
+        """Search the web using DuckDuckGo for programming questions, documentation, tutorials, and code examples"""
+        logger.debug(f"Web search: {query[:50]}...")
+        try:
+            results = DDGS().text(
+                query=query,
+                region=region,
+                safesearch=safesearch,
+                max_results=max_results,
+            )
+            logger.debug(f"Web search: {len(results)} results found")
+
+            formatted_results = []
+            for i, result in enumerate(results, 1):
+                formatted_results.append(
+                    f"{i}. **{result.get('title', 'No title')}**\n"
+                    f"   URL: {result.get('href', 'N/A')}\n"
+                    f"   {result.get('body', 'No description')}"
+                )
+
+            return (
+                "\n\n".join(formatted_results)
+                if formatted_results
+                else f"No results found for '{query}'"
+            )
+        except Exception as e:
+            logger.error(f"Web search error: {e}")
+            return f"Error during web search: {str(e)}"
+
+    @tool
+    def list_files(relative_path: str = "") -> str:
+        """List files and directories in the project. Pass empty string to list current directory."""
+        logger.debug(f"Listing files: {relative_path or 'current directory'}")
+        try:
+            target_path = (
+                CODE_ROOT_DIR / relative_path if relative_path else CODE_ROOT_DIR
+            )
+
+            if not target_path.exists():
+                return f"Path '{relative_path}' does not exist"
+
+            if not target_path.is_relative_to(CODE_ROOT_DIR):
+                return "Access denied: path outside project directory"
+
+            if not target_path.is_dir():
+                return f"'{relative_path}' is not a directory"
+
+            items = []
+            for item in sorted(target_path.iterdir()):
+                if item.name.startswith("."):
+                    continue
+                item_type = "DIR" if item.is_dir() else "FILE"
+                items.append(f"[{item_type}] {item.name}")
+
+            result = (
+                f"Contents of '{relative_path or '.'}' ({len(items)} items):\n"
+                + "\n".join(items)
+            )
+            logger.debug(f"Listed {len(items)} items")
+            return result if items else f"Directory '{relative_path or '.'}' is empty"
+        except Exception as e:
+            logger.error(f"List files error: {e}")
+            return f"Error listing files: {str(e)}"
+
+    @tool
+    def read_code_file(relative_path: str) -> str:
+        """Read contents of a code file from the project. Use this to examine source code, configuration files, etc."""
+        logger.debug(f"Reading code file: {relative_path}")
+        try:
+            file_path = CODE_ROOT_DIR / relative_path
+
+            if not file_path.exists():
+                return f"File '{relative_path}' not found"
+
+            if not file_path.is_relative_to(CODE_ROOT_DIR):
+                return "Access denied: path outside project directory"
+
+            if not file_path.is_file():
+                return f"'{relative_path}' is not a file"
+
+            content = file_path.read_text(encoding="utf-8")
+            lines = content.split("\n")
+
+            if len(lines) > 200:
+                preview = "\n".join(lines[:200])
+                return f"File: {relative_path}\nLines: {len(lines)} (showing first 200)\n\n{preview}\n\n... (file truncated)"
+
+            logger.debug(f"Read file: {len(lines)} lines")
+            return f"File: {relative_path}\nLines: {len(lines)}\n\n{content}"
+        except UnicodeDecodeError:
+            return f"Cannot read '{relative_path}': binary file or encoding issue"
+        except Exception as e:
+            logger.error(f"Read file error: {e}")
+            return f"Error reading file: {str(e)}"
     return (
         create_study_plan,
-        download_arxiv_paper,
-        execute_code,
         get_current_time,
         get_wikipedia_article,
+        list_files,
         list_study_materials,
         load_memory,
+        read_code_file,
         read_study_material,
         save_memory,
-        search_arxiv,
         search_wikipedia,
+        web_search,
     )
 
 
@@ -308,7 +378,6 @@ def _():
     from langchain_core.output_parsers import PydanticOutputParser
     from langchain_core.prompts import ChatPromptTemplate
     from pydantic import BaseModel, Field
-
     return BaseModel, ChatPromptTemplate, Field, PydanticOutputParser
 
 
@@ -316,7 +385,7 @@ def _():
 def _(BaseModel, Field):
     class QueryClassification(BaseModel):
         query_type: str = Field(
-            ..., description="Type of query: 'theory', 'code', 'planning', or 'general'"
+            ..., description="Type of query: 'theory', 'planning', or 'general'"
         )
         confidence: float = Field(
             ..., description="Confidence in classification (0.0-1.0)"
@@ -330,15 +399,6 @@ def _(BaseModel, Field):
         )
         key_concepts: list[str] = Field(
             default_factory=list, description="Key concepts covered"
-        )
-
-    class CodeResponse(BaseModel):
-        solution: str = Field(..., description="Code solution or explanation")
-        best_practices: list[str] = Field(
-            default_factory=list, description="Relevant best practices"
-        )
-        potential_issues: list[str] = Field(
-            default_factory=list, description="Potential issues to watch for"
         )
 
     class PlanningResponse(BaseModel):
@@ -361,7 +421,6 @@ def _(BaseModel, Field):
         query: str = Field(..., description="User's input query")
         classification: QueryClassification | None = None
         theory_response: TheoryResponse | None = None
-        code_response: CodeResponse | None = None
         planning_response: PlanningResponse | None = None
         memory_update: MemoryUpdate | None = None
         session_history: list[dict] = Field(
@@ -375,9 +434,7 @@ def _(BaseModel, Field):
             default_factory=list, description="Any errors encountered"
         )
         active_agent: str | None = Field(None, description="Currently active agent")
-
     return (
-        CodeResponse,
         MemoryUpdate,
         MultiAgentState,
         PlanningResponse,
@@ -393,7 +450,6 @@ def _():
     from langchain_core.messages import HumanMessage
     from langchain_openai import ChatOpenAI
     from langgraph.graph import END, StateGraph
-
     return (
         ChatOpenAI,
         END,
@@ -439,8 +495,7 @@ def _(ChatPromptTemplate, PydanticOutputParser, QueryClassification):
 
             Analyze the user's query and classify it into one of these categories:
             - 'theory': Conceptual/theoretical questions about MAS, LLMs, AI, machine learning, or academic topics
-            - 'code': Programming, implementation, debugging, or technical coding questions
-            - 'planning': Task planning, study schedules, time management, or productivity questions
+            - 'planning': Task planning, study schedules, time management, productivity questions, programming tasks, code search, or file navigation
             - 'general': Questions that don't fit the above categories
 
             Consider previous session context if provided to improve classification accuracy.
@@ -488,38 +543,6 @@ def _(ChatPromptTemplate, PydanticOutputParser, TheoryResponse):
 
 
 @app.cell
-def _(ChatPromptTemplate, CodeResponse, PydanticOutputParser):
-    code_parser = PydanticOutputParser(pydantic_object=CodeResponse)
-
-    CODE_PROMPT = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """
-            You are a code expert specializing in Python, LangChain, and LangGraph.
-
-            Provide practical code solutions with:
-            - Working, executable code examples
-            - Best practices and design patterns
-            - Potential issues, edge cases, and how to handle them
-            - Clear explanations of the code logic
-            - Type hints and documentation where appropriate
-
-            You have access to tools to execute code. Use them when helpful to demonstrate solutions.
-
-            Consider previous coding context to maintain consistency.
-
-            {format_instructions}
-            /no_think
-            """.strip(),
-            ),
-            ("human", "Previous context: {context}\n\nQuestion: {query}"),
-        ]
-    )
-    return CODE_PROMPT, code_parser
-
-
-@app.cell
 def _(ChatPromptTemplate, PlanningResponse, PydanticOutputParser):
     planning_parser = PydanticOutputParser(pydantic_object=PlanningResponse)
 
@@ -528,18 +551,19 @@ def _(ChatPromptTemplate, PlanningResponse, PydanticOutputParser):
             (
                 "system",
                 """
-            You are a planning expert specializing in study schedules and productivity.
+            You are a planning and programming expert specializing in study schedules, productivity, and code assistance.
 
             Create structured plans with:
             - Clear tasks broken into manageable steps
             - Realistic time estimates based on task complexity
-            - Resource recommendations (books, courses, tools)
+            - Resource recommendations (books, courses, tools, documentation)
             - Actionable steps with priorities
             - Milestones and checkpoints
+            - Code examples and implementation guidance when relevant
 
-            You have access to tools for time management and plan creation. Use them appropriately.
+            You have access to tools for time management, plan creation, web search for documentation, and file system navigation. Use them appropriately.
 
-            Consider previous planning requests to build on existing plans.
+            Consider previous planning and programming requests to build on existing plans.
 
             {format_instructions}
             /no_think
@@ -590,28 +614,22 @@ def _(ChatPromptTemplate, MemoryUpdate, PydanticOutputParser):
 def _(
     create_agent,
     create_study_plan,
-    download_arxiv_paper,
-    execute_code,
     get_current_time,
     get_wikipedia_article,
+    list_files,
     list_study_materials,
     llm,
     load_memory,
+    read_code_file,
     read_study_material,
     save_memory,
-    search_arxiv,
     search_wikipedia,
+    web_search,
 ):
     theory_agent = create_agent(
         llm,
         [search_wikipedia, get_wikipedia_article],
         system_prompt="You are a theory expert. Use Wikipedia search tools to find and retrieve theoretical concepts, definitions, and explanations.",
-    )
-
-    code_agent = create_agent(
-        llm,
-        [execute_code, search_arxiv, download_arxiv_paper],
-        system_prompt="You are a code expert. Use execute_code to demonstrate solutions and search_arxiv to find relevant research papers and implementations.",
     )
 
     planning_agent = create_agent(
@@ -621,8 +639,11 @@ def _(
             create_study_plan,
             list_study_materials,
             read_study_material,
+            web_search,
+            list_files,
+            read_code_file,
         ],
-        system_prompt="You are a planning expert. Use available tools for time management, plan creation, and tracking study materials.",
+        system_prompt="You are a planning and programming expert. Use tools for time management, plan creation, study materials tracking, web search for documentation, file navigation, and code reading.",
     )
 
     memory_agent = create_agent(
@@ -630,7 +651,7 @@ def _(
         [save_memory, load_memory],
         system_prompt="You are a memory manager. Use save_memory and load_memory tools to manage session data.",
     )
-    return code_agent, memory_agent, planning_agent, theory_agent
+    return memory_agent, planning_agent, theory_agent
 
 
 @app.cell
@@ -675,7 +696,6 @@ def _(ROUTER_PROMPT, datetime, llm, logger, router_parser):
             ],
             "active_agent": "router",
         }
-
     return (router_node,)
 
 
@@ -728,66 +748,7 @@ def _(HumanMessage, THEORY_PROMPT, llm, logger, theory_agent, theory_parser):
         )
 
         return {"theory_response": theory_response, "active_agent": "theory"}
-
     return (theory_node,)
-
-
-@app.cell
-def _(CODE_PROMPT, HumanMessage, code_agent, code_parser, llm, logger):
-    async def code_node(state):
-        logger.debug(f"Code Agent: ACTIVATED for query: {state.query[:60]}...")
-
-        context = ""
-        if state.session_history:
-            code_history = [
-                h for h in state.session_history if h.get("classification") == "code"
-            ]
-            if code_history:
-                context = "Previous code topics: " + ", ".join(
-                    [h.get("query", "")[:30] + "..." for h in code_history[-2:]]
-                )
-
-        messages = CODE_PROMPT.format_messages(
-            format_instructions=code_parser.get_format_instructions(),
-            context=context or "No previous code context",
-            query=state.query,
-        )
-
-        response = await llm.ainvoke(messages)
-        code_response = code_parser.parse(response.content)
-
-        logger.debug(
-            f"Code Agent: Generated solution with {len(code_response.best_practices)} best practices"
-        )
-
-        if (
-            "```python" in code_response.solution
-            or "result =" in code_response.solution
-        ):
-            logger.debug("Code Agent: Attempting to execute code example via tool")
-            try:
-                code_to_exec = code_response.solution
-                if "```python" in code_to_exec:
-                    code_to_exec = (
-                        code_to_exec.split("```python")[1].split("```")[0].strip()
-                    )
-
-                exec_result = await code_agent.ainvoke(
-                    {
-                        "messages": [
-                            HumanMessage(content=f"Execute this code: {code_to_exec}")
-                        ]
-                    }
-                )
-                logger.debug(
-                    f"Code Agent: Execution result: {str(exec_result.get('messages', []))[:100]}"
-                )
-            except Exception as e:
-                logger.warning(f"Code Agent: Could not execute code: {e}")
-
-        return {"code_response": code_response, "active_agent": "code"}
-
-    return (code_node,)
 
 
 @app.cell
@@ -846,7 +807,6 @@ def _(
         )
 
         return {"planning_response": planning_response, "active_agent": "planning"}
-
     return (planning_node,)
 
 
@@ -886,14 +846,6 @@ def _(
             )
             context_parts.append(
                 f"Key concepts: {', '.join(state.theory_response.key_concepts[:3])}"
-            )
-
-        if state.code_response:
-            context_parts.append(
-                f"Code response: {state.code_response.solution[:150]}..."
-            )
-            context_parts.append(
-                f"Best practices: {', '.join(state.code_response.best_practices[:2])}"
             )
 
         if state.planning_response:
@@ -959,25 +911,6 @@ def _(
                     + "\n\n"
                 )
 
-        elif state.code_response:
-            final_response += f"## Code Solution\n\n{state.code_response.solution}\n\n"
-            if state.code_response.best_practices:
-                final_response += (
-                    "**Best Practices:**\n"
-                    + "\n".join(
-                        [f"- {bp}" for bp in state.code_response.best_practices]
-                    )
-                    + "\n\n"
-                )
-            if state.code_response.potential_issues:
-                final_response += (
-                    "**Potential Issues:**\n"
-                    + "\n".join(
-                        [f"- {pi}" for pi in state.code_response.potential_issues]
-                    )
-                    + "\n\n"
-                )
-
         elif state.planning_response:
             final_response += f"## Study Plan\n\n```json\n{json.dumps(state.planning_response.plan, indent=2)}\n```\n\n"
             final_response += f"**Estimated Duration:** {state.planning_response.estimated_duration}\n\n"
@@ -1013,7 +946,6 @@ def _(
             "user_preferences": updated_prefs,
             "active_agent": "memory",
         }
-
     return (memory_node,)
 
 
@@ -1029,16 +961,12 @@ def _(logger):
         if route == "theory":
             logger.debug("Router: Routing to THEORY agent")
             return "theory"
-        elif route == "code":
-            logger.debug("Router: Routing to CODE agent")
-            return "code"
         elif route == "planning":
             logger.debug("Router: Routing to PLANNING agent")
             return "planning"
         else:
             logger.debug("Router: Routing to MEMORY agent (general query)")
             return "memory"
-
     return (route_query,)
 
 
@@ -1051,7 +979,6 @@ def _(MultiAgentState, StateGraph):
 @app.cell
 def _(
     END,
-    code_node,
     memory_node,
     planning_node,
     route_query,
@@ -1061,7 +988,6 @@ def _(
 ):
     workflow.add_node("router", router_node)
     workflow.add_node("theory", theory_node)
-    workflow.add_node("code", code_node)
     workflow.add_node("planning", planning_node)
     workflow.add_node("memory", memory_node)
 
@@ -1072,14 +998,12 @@ def _(
         route_query,
         {
             "theory": "theory",
-            "code": "code",
             "planning": "planning",
             "memory": "memory",
         },
     )
 
     workflow.add_edge("theory", "memory")
-    workflow.add_edge("code", "memory")
     workflow.add_edge("planning", "memory")
 
     workflow.add_edge("memory", END)
@@ -1091,7 +1015,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Graph Visualization
+    ## Визуализация графа
     """)
     return
 
@@ -1105,10 +1029,10 @@ def _(app, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## System Evaluation - Running Real Experiments
+    ## Оценка системы - Запуск реальных экспериментов
 
-    ### Test Queries
-    We'll test the system with 5 diverse queries covering all agent types.
+    ### Тестовые запросы
+    Тестируем систему на 5 различных запросах, охватывающих все типы агентов.
     """)
     return
 
@@ -1118,33 +1042,33 @@ def _():
     test_queries = [
         {
             "id": 1,
-            "query": "What are the key challenges in implementing multi-agent systems with LLMs?",
+            "query": "Каковы ключевые вызовы при реализации мультиагентных систем с использованием LLM?",
             "expected_agent": "theory",
-            "description": "Conceptual question about MAS and LLMs",
+            "description": "Концептуальный вопрос о МАС и LLM",
         },
         {
             "id": 2,
-            "query": "How can I implement a router pattern in LangGraph with conditional edges?",
-            "expected_agent": "code",
-            "description": "Programming question about LangGraph implementation",
+            "query": "Создай 10-часовой план изучения мультиагентных систем",
+            "expected_agent": "planning",
+            "description": "Запрос на планирование учебного расписания",
         },
         {
             "id": 3,
-            "query": "Create a 10-hour study plan for learning about multi-agent systems",
-            "expected_agent": "planning",
-            "description": "Planning request for study schedule",
+            "query": "В чём различия между паттернами supervisor и sequential workflow в МАС?",
+            "expected_agent": "theory",
+            "description": "Теоретический вопрос сравнения",
         },
         {
             "id": 4,
-            "query": "What are the differences between supervisor and sequential workflow patterns in MAS?",
-            "expected_agent": "theory",
-            "description": "Theoretical comparison question",
+            "query": "Помоги организовать 5-дневное расписание для изучения основ LangGraph",
+            "expected_agent": "planning",
+            "description": "Запрос на планирование с конкретной длительностью",
         },
         {
             "id": 5,
-            "query": "Write Python code that uses LangChain tools with proper error handling",
-            "expected_agent": "code",
-            "description": "Code implementation request with specific requirements",
+            "query": "Объясни концепцию координации и коммуникации агентов в мультиагентных системах",
+            "expected_agent": "theory",
+            "description": "Теоретический вопрос о координации агентов",
         },
     ]
     return (test_queries,)
@@ -1158,16 +1082,15 @@ def _(MultiAgentState, app, logger):
         result = await app.ainvoke(state)
         logger.debug(f"Test completed. Active agent: {result.get('active_agent')}")
         return result
-
     return (run_test_query,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
-    ### Running Experiments
+    ### Запуск экспериментов
 
-    Execute the cell below to run all 5 test queries and collect results.
+    Выполните ячейку ниже для запуска всех 5 тестовых запросов и сбора результатов.
     """)
     return
 
@@ -1197,7 +1120,7 @@ async def _(logger, run_test_query, test_queries):
                 "reasoning": result.get("classification").reasoning
                 if result.get("classification")
                 else "",
-                "response_preview": result.get("final_response")[:200] + "..."
+                "response": result.get("final_response")
                 if result.get("final_response")
                 else "",
                 "memory_summary": result.get("memory_update").session_summary
@@ -1210,6 +1133,11 @@ async def _(logger, run_test_query, test_queries):
     logger.debug("Experiment batch completed")
 
     experiment_results
+    return
+
+
+@app.cell
+def _():
     return
 
 
