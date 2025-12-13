@@ -1,7 +1,7 @@
 import marimo
 
-__generated_with = "0.17.8"
-app = marimo.App(width="medium", auto_download=["ipynb"])
+__generated_with = "0.18.4"
+app = marimo.App(width="medium")
 
 
 @app.cell
@@ -47,8 +47,9 @@ def _(mo):
     ```
 
     ### Tool Usage
-    - **Code Agent**: Uses `execute_code` tool for running Python snippets
-    - **Planning Agent**: Uses `get_current_time` and `create_study_plan` tools
+    - **Theory Agent**: Uses `search_wikipedia` and `get_wikipedia_article` tools for theoretical concepts
+    - **Code Agent**: Uses `execute_code`, `search_arxiv`, and `download_arxiv_paper` tools for code and research
+    - **Planning Agent**: Uses `get_current_time`, `create_study_plan`, `list_study_materials`, and `read_study_material` tools
     - **Memory Agent**: Uses `save_memory` and `load_memory` tools to persist session data
 
     ### Memory Management
@@ -62,18 +63,23 @@ def _(mo):
 @app.cell
 def _():
     import json
+    import os
     from datetime import datetime
     from pathlib import Path
 
+    import arxiv
+    import wikipedia
     from langchain.tools import tool
     from logly import logger
 
-    return Path, datetime, json, logger, tool
+    return Path, arxiv, datetime, json, logger, os, tool, wikipedia
 
 
 @app.cell
-def _(Path, datetime, json, logger, tool):
+def _(Path, arxiv, datetime, json, logger, tool, wikipedia):
     MEMORY_FILE = Path("lab2_memory.json")
+    STUDY_MATERIALS_DIR = Path("study_materials")
+    STUDY_MATERIALS_DIR.mkdir(parents=True, exist_ok=True)
 
     @tool
     def save_memory(session_history: str, user_preferences: str) -> str:
@@ -85,7 +91,7 @@ def _(Path, datetime, json, logger, tool):
                 "last_updated": datetime.now().isoformat(),
             }
             MEMORY_FILE.write_text(json.dumps(data, indent=2))
-            logger.info(f"Memory saved: {len(data['session_history'])} sessions")
+            logger.debug(f"Memory saved: {len(data['session_history'])} sessions")
             return f"Memory saved successfully at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         except Exception as e:
             logger.error(f"Failed to save memory: {e}")
@@ -96,11 +102,11 @@ def _(Path, datetime, json, logger, tool):
         """Load session history and user preferences from persistent storage"""
         try:
             if not MEMORY_FILE.exists():
-                logger.info("No existing memory file found")
+                logger.debug("No existing memory file found")
                 return json.dumps({"session_history": [], "user_preferences": {}})
 
             data = json.loads(MEMORY_FILE.read_text())
-            logger.info(
+            logger.debug(
                 f"Memory loaded: {len(data.get('session_history', []))} sessions"
             )
             return json.dumps(data)
@@ -111,12 +117,12 @@ def _(Path, datetime, json, logger, tool):
     @tool
     def execute_code(code: str) -> str:
         """Execute Python code and return result"""
-        logger.info(f"Executing code: {code[:50]}...")
+        logger.debug(f"Executing code: {code[:50]}...")
         try:
             local_vars = {}
             exec(code, {}, local_vars)
             result = local_vars.get("result", "Code executed successfully")
-            logger.info(f"Code execution result: {str(result)[:100]}")
+            logger.debug(f"Code execution result: {str(result)[:100]}")
             return str(result)
         except Exception as e:
             logger.error(f"Code execution error: {e}")
@@ -130,7 +136,7 @@ def _(Path, datetime, json, logger, tool):
     @tool
     def create_study_plan(topic: str, duration_hours: int) -> str:
         """Create structured study plan for given topic and duration"""
-        logger.info(f"Creating study plan for: {topic}, {duration_hours}h")
+        logger.debug(f"Creating study plan for: {topic}, {duration_hours}h")
         plan = {
             "topic": topic,
             "duration_hours": duration_hours,
@@ -162,12 +168,138 @@ def _(Path, datetime, json, logger, tool):
 
         return json.dumps(plan, indent=2)
 
+    @tool
+    def search_wikipedia(query: str, max_results: int = 3) -> str:
+        """Search Wikipedia and return summaries of top articles for theoretical concepts"""
+        logger.debug(f"Searching Wikipedia for: {query}")
+        try:
+            results = wikipedia.search(query, results=max_results)
+            summaries = []
+            for title in results[:max_results]:
+                try:
+                    summary = wikipedia.summary(title, sentences=2)
+                    summaries.append(f"**{title}**: {summary}")
+                except (
+                    wikipedia.exceptions.DisambiguationError,
+                    wikipedia.exceptions.PageError,
+                ):
+                    continue
+            return (
+                "\n\n".join(summaries)
+                if summaries
+                else f"No results found for '{query}'"
+            )
+        except Exception as e:
+            logger.error(f"Wikipedia search error: {e}")
+            return f"Error searching Wikipedia: {str(e)}"
+
+    @tool
+    def get_wikipedia_article(title: str) -> str:
+        """Get detailed content from a specific Wikipedia article"""
+        logger.debug(f"Fetching Wikipedia article: {title}")
+        try:
+            page = wikipedia.page(title)
+            file_path = STUDY_MATERIALS_DIR / f"{title.replace(' ', '_')}.txt"
+            file_path.write_text(page.content, encoding="utf-8")
+            summary = wikipedia.summary(title, sentences=5)
+            return f"**{page.title}**\n\n{summary}\n\n(Full article saved to {file_path.name})"
+        except wikipedia.exceptions.DisambiguationError as e:
+            return f"Ambiguous title '{title}'. Options: {', '.join(e.options[:5])}"
+        except wikipedia.exceptions.PageError:
+            return f"Article '{title}' not found"
+        except Exception as e:
+            logger.error(f"Wikipedia article error: {e}")
+            return f"Error: {str(e)}"
+
+    @tool
+    def search_arxiv(query: str, max_results: int = 3) -> str:
+        """Search arXiv for research papers and return titles and abstracts"""
+        logger.debug(f"Searching arXiv for: {query}")
+        try:
+            search = arxiv.Search(
+                query=query,
+                max_results=max_results,
+                sort_by=arxiv.SortCriterion.Relevance,
+            )
+            results = []
+            for paper in search.results():
+                arxiv_id = paper.entry_id.split("/")[-1]
+                results.append(
+                    f"**{paper.title}** (ID: {arxiv_id})\n"
+                    f"Authors: {', '.join([a.name for a in paper.authors[:3]])}\n"
+                    f"Published: {paper.published.strftime('%Y-%m-%d')}\n"
+                    f"Abstract: {paper.summary[:300]}...\n"
+                )
+            return "\n\n".join(results) if results else f"No papers found for '{query}'"
+        except Exception as e:
+            logger.error(f"arXiv search error: {e}")
+            return f"Error searching arXiv: {str(e)}"
+
+    @tool
+    def download_arxiv_paper(arxiv_id: str) -> str:
+        """Download a paper from arXiv by its ID"""
+        logger.debug(f"Downloading arXiv paper: {arxiv_id}")
+        try:
+            search = arxiv.Search(id_list=[arxiv_id])
+            paper = next(search.results(), None)
+            if paper:
+                file_path = STUDY_MATERIALS_DIR / f"{arxiv_id}.pdf"
+                paper.download_pdf(
+                    dirpath=str(STUDY_MATERIALS_DIR), filename=file_path.name
+                )
+                return f"Downloaded '{paper.title}' to {file_path.name}"
+            else:
+                return f"Paper {arxiv_id} not found"
+        except Exception as e:
+            logger.error(f"arXiv download error: {e}")
+            return f"Error downloading paper: {str(e)}"
+
+    @tool
+    def list_study_materials(folder: str = "study_materials") -> str:
+        """List all downloaded study materials (articles, papers)"""
+        logger.debug("Listing study materials")
+        try:
+            path = Path(folder)
+            if not path.exists():
+                return "No study materials folder found"
+            files = [f.name for f in path.glob("*")]
+            if not files:
+                return "No study materials downloaded yet"
+            return f"Study materials ({len(files)} files):\n" + "\n".join(
+                [f"- {f}" for f in sorted(files)]
+            )
+        except Exception as e:
+            logger.error(f"List materials error: {e}")
+            return f"Error listing materials: {str(e)}"
+
+    @tool
+    def read_study_material(filename: str) -> str:
+        """Read content from a downloaded study material file"""
+        logger.debug(f"Reading study material: {filename}")
+        try:
+            file_path = STUDY_MATERIALS_DIR / filename
+            if not file_path.exists():
+                return f"File '{filename}' not found in study materials"
+            if file_path.suffix == ".pdf":
+                return f"PDF file '{filename}' downloaded. Use a PDF reader to view it."
+            content = file_path.read_text(encoding="utf-8")
+            return content[:2000] + ("..." if len(content) > 2000 else "")
+        except Exception as e:
+            logger.error(f"Read material error: {e}")
+            return f"Error reading file: {str(e)}"
+
     return (
         create_study_plan,
+        download_arxiv_paper,
         execute_code,
         get_current_time,
+        get_wikipedia_article,
+        list_study_materials,
         load_memory,
+        read_study_material,
         save_memory,
+        search_arxiv,
+        search_wikipedia,
     )
 
 
@@ -256,8 +388,6 @@ def _(BaseModel, Field):
 
 @app.cell
 def _():
-    import os
-
     from dotenv import find_dotenv, load_dotenv
     from langchain.agents import create_agent
     from langchain_core.messages import HumanMessage
@@ -272,7 +402,6 @@ def _():
         create_agent,
         find_dotenv,
         load_dotenv,
-        os,
     )
 
 
@@ -461,22 +590,39 @@ def _(ChatPromptTemplate, MemoryUpdate, PydanticOutputParser):
 def _(
     create_agent,
     create_study_plan,
+    download_arxiv_paper,
     execute_code,
     get_current_time,
+    get_wikipedia_article,
+    list_study_materials,
     llm,
     load_memory,
+    read_study_material,
     save_memory,
+    search_arxiv,
+    search_wikipedia,
 ):
+    theory_agent = create_agent(
+        llm,
+        [search_wikipedia, get_wikipedia_article],
+        system_prompt="You are a theory expert. Use Wikipedia search tools to find and retrieve theoretical concepts, definitions, and explanations.",
+    )
+
     code_agent = create_agent(
         llm,
-        [execute_code],
-        system_prompt="You are a code expert. Use the execute_code tool to demonstrate working solutions.",
+        [execute_code, search_arxiv, download_arxiv_paper],
+        system_prompt="You are a code expert. Use execute_code to demonstrate solutions and search_arxiv to find relevant research papers and implementations.",
     )
 
     planning_agent = create_agent(
         llm,
-        [get_current_time, create_study_plan],
-        system_prompt="You are a planning expert. Use available tools for time management and plan creation.",
+        [
+            get_current_time,
+            create_study_plan,
+            list_study_materials,
+            read_study_material,
+        ],
+        system_prompt="You are a planning expert. Use available tools for time management, plan creation, and tracking study materials.",
     )
 
     memory_agent = create_agent(
@@ -484,13 +630,13 @@ def _(
         [save_memory, load_memory],
         system_prompt="You are a memory manager. Use save_memory and load_memory tools to manage session data.",
     )
-    return code_agent, memory_agent, planning_agent
+    return code_agent, memory_agent, planning_agent, theory_agent
 
 
 @app.cell
 def _(ROUTER_PROMPT, datetime, llm, logger, router_parser):
     async def router_node(state):
-        logger.info(f"Router: Processing query: {state.query[:60]}...")
+        logger.debug(f"Router: Processing query: {state.query[:60]}...")
 
         context = ""
         if state.session_history:
@@ -511,10 +657,10 @@ def _(ROUTER_PROMPT, datetime, llm, logger, router_parser):
         response = await llm.ainvoke(messages)
         classification = router_parser.parse(response.content)
 
-        logger.info(
+        logger.debug(
             f"Router: Classified as '{classification.query_type}' (confidence: {classification.confidence:.2f})"
         )
-        logger.info(f"Router: Reasoning: {classification.reasoning}")
+        logger.debug(f"Router: Reasoning: {classification.reasoning}")
 
         return {
             "classification": classification,
@@ -534,9 +680,9 @@ def _(ROUTER_PROMPT, datetime, llm, logger, router_parser):
 
 
 @app.cell
-def _(THEORY_PROMPT, llm, logger, theory_parser):
+def _(HumanMessage, THEORY_PROMPT, llm, logger, theory_agent, theory_parser):
     async def theory_node(state):
-        logger.info(f"Theory Agent: ACTIVATED for query: {state.query[:60]}...")
+        logger.debug(f"Theory Agent: ACTIVATED for query: {state.query[:60]}...")
 
         context = ""
         if state.session_history:
@@ -548,19 +694,36 @@ def _(THEORY_PROMPT, llm, logger, theory_parser):
                     [h.get("query", "")[:30] + "..." for h in theory_history[-2:]]
                 )
 
+        logger.debug(
+            "Theory Agent: Using Wikipedia search tools for theoretical content"
+        )
+        tool_result = await theory_agent.ainvoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=f"Help answer this theoretical question: {state.query}. Use search_wikipedia to find relevant concepts and get_wikipedia_article for detailed information."
+                    )
+                ]
+            }
+        )
+        logger.debug(
+            f"Theory Agent: Tool execution result: {str(tool_result.get('messages', []))[:150]}"
+        )
+
         messages = THEORY_PROMPT.format_messages(
             format_instructions=theory_parser.get_format_instructions(),
             context=context or "No previous theory context",
-            query=state.query,
+            query=state.query
+            + f"\n\nWikipedia search results: {str(tool_result.get('messages', []))}",
         )
 
         response = await llm.ainvoke(messages)
         theory_response = theory_parser.parse(response.content)
 
-        logger.info(
+        logger.debug(
             f"Theory Agent: Generated response with {len(theory_response.key_concepts)} key concepts"
         )
-        logger.info(
+        logger.debug(
             f"Theory Agent: Key concepts: {', '.join(theory_response.key_concepts[:3])}"
         )
 
@@ -572,7 +735,7 @@ def _(THEORY_PROMPT, llm, logger, theory_parser):
 @app.cell
 def _(CODE_PROMPT, HumanMessage, code_agent, code_parser, llm, logger):
     async def code_node(state):
-        logger.info(f"Code Agent: ACTIVATED for query: {state.query[:60]}...")
+        logger.debug(f"Code Agent: ACTIVATED for query: {state.query[:60]}...")
 
         context = ""
         if state.session_history:
@@ -593,7 +756,7 @@ def _(CODE_PROMPT, HumanMessage, code_agent, code_parser, llm, logger):
         response = await llm.ainvoke(messages)
         code_response = code_parser.parse(response.content)
 
-        logger.info(
+        logger.debug(
             f"Code Agent: Generated solution with {len(code_response.best_practices)} best practices"
         )
 
@@ -601,7 +764,7 @@ def _(CODE_PROMPT, HumanMessage, code_agent, code_parser, llm, logger):
             "```python" in code_response.solution
             or "result =" in code_response.solution
         ):
-            logger.info("Code Agent: Attempting to execute code example via tool")
+            logger.debug("Code Agent: Attempting to execute code example via tool")
             try:
                 code_to_exec = code_response.solution
                 if "```python" in code_to_exec:
@@ -616,7 +779,7 @@ def _(CODE_PROMPT, HumanMessage, code_agent, code_parser, llm, logger):
                         ]
                     }
                 )
-                logger.info(
+                logger.debug(
                     f"Code Agent: Execution result: {str(exec_result.get('messages', []))[:100]}"
                 )
             except Exception as e:
@@ -637,7 +800,7 @@ def _(
     planning_parser,
 ):
     async def planning_node(state):
-        logger.info(f"Planning Agent: ACTIVATED for query: {state.query[:60]}...")
+        logger.debug(f"Planning Agent: ACTIVATED for query: {state.query[:60]}...")
 
         context = ""
         if state.session_history:
@@ -651,17 +814,17 @@ def _(
                     [h.get("query", "")[:30] + "..." for h in planning_history[-2:]]
                 )
 
-        logger.info("Planning Agent: Using time and planning tools")
+        logger.debug("Planning Agent: Using time, planning, and study materials tools")
         tool_result = await planning_agent.ainvoke(
             {
                 "messages": [
                     HumanMessage(
-                        content=f"Help with this planning request: {state.query}. Use get_current_time and create_study_plan tools as needed."
+                        content=f"Help with this planning request: {state.query}. Use get_current_time, create_study_plan, list_study_materials, and read_study_material tools as needed."
                     )
                 ]
             }
         )
-        logger.info(
+        logger.debug(
             f"Planning Agent: Tool execution result: {str(tool_result.get('messages', []))[:100]}"
         )
 
@@ -675,10 +838,10 @@ def _(
         response = await llm.ainvoke(messages)
         planning_response = planning_parser.parse(response.content)
 
-        logger.info(
+        logger.debug(
             f"Planning Agent: Created plan with duration: {planning_response.estimated_duration}"
         )
-        logger.info(
+        logger.debug(
             f"Planning Agent: {len(planning_response.recommendations)} recommendations"
         )
 
@@ -698,16 +861,16 @@ def _(
     memory_parser,
 ):
     async def memory_node(state):
-        logger.info(
+        logger.debug(
             "Memory Agent: ACTIVATED - Processing session and generating final response"
         )
 
-        logger.info("Memory Agent: Loading existing memory via tool")
+        logger.debug("Memory Agent: Loading existing memory via tool")
         memory_load_result = await memory_agent.ainvoke(
             {"messages": [HumanMessage(content="Load current memory")]}
         )
         previous_memory = str(memory_load_result.get("messages", [{}]))
-        logger.info(f"Memory Agent: Loaded memory: {previous_memory[:100]}")
+        logger.debug(f"Memory Agent: Loaded memory: {previous_memory[:100]}")
 
         context_parts = [f"User query: {state.query}"]
 
@@ -752,10 +915,10 @@ def _(
         response = await llm.ainvoke(messages)
         memory_update = memory_parser.parse(response.content)
 
-        logger.info(
+        logger.debug(
             f"Memory Agent: Session summary: {memory_update.session_summary[:100]}"
         )
-        logger.info(f"Memory Agent: {len(memory_update.action_items)} action items")
+        logger.debug(f"Memory Agent: {len(memory_update.action_items)} action items")
 
         updated_history = state.session_history + [
             {"summary": memory_update.session_summary}
@@ -765,7 +928,7 @@ def _(
             **memory_update.user_preferences_updated,
         }
 
-        logger.info("Memory Agent: Saving updated memory via tool")
+        logger.debug("Memory Agent: Saving updated memory via tool")
         save_result = await memory_agent.ainvoke(
             {
                 "messages": [
@@ -775,7 +938,7 @@ def _(
                 ]
             }
         )
-        logger.info(
+        logger.debug(
             f"Memory Agent: Save result: {str(save_result.get('messages', []))[:50]}"
         )
 
@@ -840,7 +1003,9 @@ def _(
                 [f"- {item}" for item in memory_update.action_items]
             )
 
-        logger.info(f"Memory Agent: Final response length: {len(final_response)} chars")
+        logger.debug(
+            f"Memory Agent: Final response length: {len(final_response)} chars"
+        )
 
         return {
             "memory_update": memory_update,
@@ -862,16 +1027,16 @@ def _(logger):
         route = state.classification.query_type
 
         if route == "theory":
-            logger.info("Router: Routing to THEORY agent")
+            logger.debug("Router: Routing to THEORY agent")
             return "theory"
         elif route == "code":
-            logger.info("Router: Routing to CODE agent")
+            logger.debug("Router: Routing to CODE agent")
             return "code"
         elif route == "planning":
-            logger.info("Router: Routing to PLANNING agent")
+            logger.debug("Router: Routing to PLANNING agent")
             return "planning"
         else:
-            logger.info("Router: Routing to MEMORY agent (general query)")
+            logger.debug("Router: Routing to MEMORY agent (general query)")
             return "memory"
 
     return (route_query,)
@@ -988,16 +1153,16 @@ def _():
 @app.cell
 def _(MultiAgentState, app, logger):
     async def run_test_query(query_text: str):
-        logger.info(f"Starting test query: {query_text[:60]}...")
+        logger.debug(f"Starting test query: {query_text[:60]}...")
         state = MultiAgentState(query=query_text)
         result = await app.ainvoke(state)
-        logger.info(f"Test completed. Active agent: {result.active_agent}")
+        logger.debug(f"Test completed. Active agent: {result.get('active_agent')}")
         return result
 
     return (run_test_query,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md("""
     ### Running Experiments
@@ -1009,12 +1174,12 @@ def _(mo):
 
 @app.cell
 async def _(logger, run_test_query, test_queries):
-    logger.info("Starting experiment batch")
+    logger.debug("Starting experiment batch")
 
     experiment_results = []
 
     for test in test_queries:
-        logger.info(f"Test #{test['id']}: {test['description']}")
+        logger.debug(f"Test #{test['id']}: {test['description']}")
         result = await run_test_query(test["query"])
 
         experiment_results.append(
@@ -1023,327 +1188,28 @@ async def _(logger, run_test_query, test_queries):
                 "query": test["query"],
                 "description": test["description"],
                 "expected_agent": test["expected_agent"],
-                "actual_agent": result.classification.query_type
-                if result.classification
+                "actual_agent": result.get("classification").query_type
+                if result.get("classification")
                 else "unknown",
-                "confidence": result.classification.confidence
-                if result.classification
+                "confidence": result.get("classification").confidence
+                if result.get("classification")
                 else 0.0,
-                "reasoning": result.classification.reasoning
-                if result.classification
+                "reasoning": result.get("classification").reasoning
+                if result.get("classification")
                 else "",
-                "response_preview": result.final_response[:200] + "..."
-                if result.final_response
+                "response_preview": result.get("final_response")[:200] + "..."
+                if result.get("final_response")
                 else "",
-                "memory_summary": result.memory_update.session_summary
-                if result.memory_update
+                "memory_summary": result.get("memory_update").session_summary
+                if result.get("memory_update")
                 else "",
-                "tools_used": result.active_agent,
+                "tools_used": result.get("active_agent"),
             }
         )
 
-    logger.info("Experiment batch completed")
+    logger.debug("Experiment batch completed")
 
     experiment_results
-    return (experiment_results,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Experiment Results Analysis
-    """)
-    return
-
-
-@app.cell
-def _(experiment_results, mo):
-    results_md = "# Experiment Results\n\n"
-
-    for res in experiment_results:
-        results_md += f"""
-    ## Test #{res["test_id"]}: {res["description"]}
-
-    **Query:** {res["query"]}
-
-    **Expected Agent:** `{res["expected_agent"]}`
-    **Actual Agent:** `{res["actual_agent"]}`
-    **Confidence:** {res["confidence"]:.2%}
-    **Match:** {"PASS" if res["expected_agent"] == res["actual_agent"] else "FAIL"}
-
-    **Classification Reasoning:**
-    {res["reasoning"]}
-
-    **Response Preview:**
-    {res["response_preview"]}
-
-    **Memory Summary:**
-    {res["memory_summary"]}
-
-    ---
-
-    """
-
-    correct = sum(
-        1 for r in experiment_results if r["expected_agent"] == r["actual_agent"]
-    )
-    total = len(experiment_results)
-    accuracy = correct / total if total > 0 else 0
-
-    results_md += f"""
-    ## Summary Statistics
-
-    - **Total Tests:** {total}
-    - **Correct Routing:** {correct}/{total}
-    - **Routing Accuracy:** {accuracy:.1%}
-    - **Average Confidence:** {sum(r["confidence"] for r in experiment_results) / total:.1%}
-
-    """
-
-    mo.md(results_md)
-    return (accuracy,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Detailed Evaluation Criteria
-    """)
-    return
-
-
-@app.cell
-def _(experiment_results, mo):
-    evaluation_md = """
-    # Evaluation Against Criteria
-
-    ## 1. Routing Accuracy
-    """
-
-    routing_correct = [
-        r for r in experiment_results if r["expected_agent"] == r["actual_agent"]
-    ]
-    routing_incorrect = [
-        r for r in experiment_results if r["expected_agent"] != r["actual_agent"]
-    ]
-
-    evaluation_md += f"""
-    - **Correct Routings:** {len(routing_correct)}/{len(experiment_results)}
-    - **Misrouted Queries:** {len(routing_incorrect)}
-
-    """
-
-    if routing_incorrect:
-        evaluation_md += "**Misrouted Cases:**\n"
-        for r in routing_incorrect:
-            evaluation_md += f"- Test #{r['test_id']}: Expected `{r['expected_agent']}`, got `{r['actual_agent']}`\n"
-    else:
-        evaluation_md += "**Perfect routing - all queries correctly classified!**\n"
-
-    evaluation_md += """
-
-    ## 2. Response Quality
-
-    All responses were agent-appropriate:
-    """
-
-    for r in experiment_results:
-        evaluation_md += f"- Test #{r['test_id']} ({r['actual_agent']}): Generated structured response\n"
-
-    evaluation_md += """
-
-    ## 3. Memory Usage
-
-    Memory system actively used:
-    - Session history maintained across all queries
-    - Memory saved to persistent storage after each interaction
-    - Previous context loaded and used for improved routing
-    - User preferences tracked
-
-    ## 4. Tool Integration
-
-    Tools successfully called by appropriate agents:
-    """
-
-    tool_usage = {}
-    for r in experiment_results:
-        agent = r["actual_agent"]
-        if agent not in tool_usage:
-            tool_usage[agent] = 0
-        tool_usage[agent] += 1
-
-    for agent, count in tool_usage.items():
-        evaluation_md += f"- **{agent.title()} Agent:** Activated {count} time(s)\n"
-
-    evaluation_md += """
-    - Code Agent: Used `execute_code` tool
-    - Planning Agent: Used `get_current_time` and `create_study_plan` tools
-    - Memory Agent: Used `save_memory` and `load_memory` tools
-
-    ## 5. Overall Usefulness
-
-    The system provides:
-    - Accurate routing to specialized agents
-    - Contextually aware responses using session history
-    - Structured output with best practices/references
-    - Persistent memory for continuity
-    - Tool calling for executable demonstrations
-    - Comprehensive logging for transparency
-
-    """
-
-    mo.md(evaluation_md)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Reflection on Implementation
-
-    Based on actual experimental results and system behavior.
-    """)
-    return
-
-
-@app.cell
-def _(accuracy, experiment_results, mo):
-    reflection_md = f"""
-    # Reflection
-
-    ## What Worked Well
-
-    ### 1. Router Pattern with Conditional Edges
-    The router agent achieved **{accuracy:.1%} routing accuracy** on test queries. The implementation correctly uses `add_conditional_edges` instead of multiple parallel edges, ensuring only ONE agent is activated per query. The `route_query` function properly maps classifications to specific agent nodes.
-
-    **Evidence:**
-    - All {len(experiment_results)} queries were routed to exactly one specialized agent
-    - No parallel execution issues
-    - Clean handoff through conditional logic
-
-    ### 2. Tool Calling Integration
-    Agents successfully called appropriate tools:
-    - **Code Agent:** Used `execute_code` to demonstrate working solutions
-    - **Planning Agent:** Leveraged `get_current_time` and `create_study_plan` for structured plans
-    - **Memory Agent:** Persisted session data using `save_memory` and `load_memory`
-
-    **Evidence from logs:**
-    - Tool executions logged with results
-    - File-based persistence working (lab2_memory.json)
-    - Tools called via AgentExecutor framework
-
-    ### 3. Memory Management
-    Session history maintained in state AND persisted to file:
-    - No global variables used (state-based approach)
-    - Previous context loaded and used for routing decisions
-    - User preferences tracked across interactions
-
-    **Evidence:**
-    - Memory file created and updated after each query
-    - Context injected into agent prompts
-    - Session summaries generated
-
-    ### 4. Logging with logly
-    Comprehensive logging throughout:
-    - Router decisions logged with reasoning
-    - Agent activations clearly marked
-    - Tool calls and results tracked
-    - Easy debugging and transparency
-
-    ## Challenges Encountered
-
-    ### 1. Classification Edge Cases
-    Some queries could legitimately belong to multiple categories. For example:
-    - "Implement a router pattern" could be **code** OR **theory**
-    - System relies on confidence scores and reasoning
-
-    **Observed:** Confidence scores ranged from {min(r["confidence"] for r in experiment_results):.1%} to {max(r["confidence"] for r in experiment_results):.1%}
-
-    ### 2. Tool Execution Complexity
-    Code execution has limitations:
-    - Sandboxing not implemented
-    - Complex multi-file examples can't run
-    - Error handling at tool level needed
-
-    ### 3. Memory Context Window
-    Currently using last 3 interactions for context - may need tuning for:
-    - Longer conversations
-    - Topic switching
-    - Deep dives into specific areas
-
-    ## System Behavior Analysis
-
-    ### Routing Decisions
-    {len([r for r in experiment_results if r["actual_agent"] == "theory"])} theory queries, {len([r for r in experiment_results if r["actual_agent"] == "code"])} code queries, {len([r for r in experiment_results if r["actual_agent"] == "planning"])} planning queries
-
-    Each routing decision was logged with clear reasoning, demonstrating transparent decision-making.
-
-    ### Response Quality
-    All responses included:
-    - Structured format (JSON schemas enforced)
-    - Domain-specific content (theory concepts, code examples, plans)
-    - Supporting information (references, best practices, recommendations)
-
-    ### Memory Updates
-    Every interaction resulted in:
-    - Session summary generation
-    - Preference extraction
-    - Action items identification
-    - Persistent storage update
-
-    ## Future Enhancements
-
-    ### 1. Add Reviewer Agent
-    Implement a review-revise loop (like in Lab 1) where:
-    - Reviewer evaluates response quality
-    - Can request revisions from specialized agents
-    - Ensures higher quality before final output
-
-    ### 2. Enhanced Memory with RAG
-    - Vector database for semantic search of past interactions
-    - Retrieve relevant previous answers
-    - Build knowledge base over time
-
-    ### 3. More Specialized Tools
-    - **Theory Agent:** Web search for recent papers
-    - **Code Agent:** Linting, testing, documentation generation
-    - **Planning Agent:** Calendar integration, deadline tracking
-
-    ### 4. Agent Collaboration
-    - Allow agents to call each other (not just linear flow)
-    - Theory agent can request code examples from code agent
-    - Planning agent can leverage theory agent for learning path design
-
-    ### 5. User Feedback Loop
-    - Collect ratings on responses
-    - Use feedback to tune routing confidence thresholds
-    - Improve agent prompts based on user satisfaction
-
-    ## Conclusion
-
-    This implementation successfully demonstrates:
-    - **Correct MAS pattern:** Router + specialized agents with conditional routing
-    - **Tool calling:** Real integration with execute, time, planning, and memory tools
-    - **Memory management:** State-based with file persistence, no global variables
-    - **Practical utility:** System provides genuinely useful responses for study/productivity
-
-    The architecture is production-ready for the specified use case, with clear paths for enhancement. The refactoring addressed all critical issues from the initial review:
-    1. Fixed graph logic with conditional edges
-    2. Implemented real tool calling via AgentExecutor
-    3. Removed global variables
-    4. Added comprehensive logging
-    5. Ran actual experiments
-    6. Based reflection on real data
-
-    **Overall Assessment:** System meets all Lab 2 requirements and demonstrates solid understanding of LangGraph, LangChain, and multi-agent orchestration patterns.
-    """
-
-    mo.md(reflection_md)
-    return
-
-
-@app.cell
-def _():
     return
 
 

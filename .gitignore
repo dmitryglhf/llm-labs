@@ -214,3 +214,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+uv.lock
+
+study_materials/
+lab2_memory.json
