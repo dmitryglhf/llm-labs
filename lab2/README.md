@@ -12,16 +12,6 @@
 uv sync --group lab2
 ```
 
-### Конфигурация
-
-Создайте файл `.env` с параметрами подключения к серверу vLLM:
-
-```bash
-OPENAI_BASE_URL=http://your-server:port/v1
-OPENAI_API_KEY=your_api_key
-MODEL_NAME=qwen3-32b
-```
-
 ### Запуск
 
 Запустите интерактивный ноутбук:
